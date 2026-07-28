@@ -3,7 +3,7 @@ use std::{
     process::Command,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use ignore::gitignore::GitignoreBuilder;
 
 use crate::{config::REPO_IGNORE_FILE, errors::AicError};
@@ -167,9 +167,9 @@ pub(crate) fn filter_ignored(root: &Path, files: Vec<String>) -> Result<Vec<Stri
     }
 
     let mut builder = GitignoreBuilder::new(root);
-    builder
-        .add(ignore_path)
-        .context("failed to read .aicommitignore")?;
+    if let Some(err) = builder.add(&ignore_path) {
+        return Err(err).context("failed to read .aicommitignore");
+    }
     let matcher = builder.build()?;
     Ok(files
         .into_iter()
