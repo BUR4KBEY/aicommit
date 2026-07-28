@@ -3,7 +3,7 @@ use std::{
     process::Command,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use ignore::gitignore::GitignoreBuilder;
 
 use crate::{config::REPO_IGNORE_FILE, errors::AicError};
@@ -161,13 +161,21 @@ pub(crate) fn parse_lines(input: &str) -> Vec<String> {
 }
 
 pub(crate) fn filter_ignored(root: &Path, files: Vec<String>) -> Result<Vec<String>> {
-    let ignore_path = root.join(REPO_IGNORE_FILE);
-    if !ignore_path.exists() {
+    let gitignore_path = root.join(".gitignore");
+    let aicommitignore_path = root.join(REPO_IGNORE_FILE);
+
+    let gitignore_exists = gitignore_path.exists();
+    let aicommitignore_exists = aicommitignore_path.exists();
+
+    if !gitignore_exists && !aicommitignore_exists {
         return Ok(files);
     }
 
     let mut builder = GitignoreBuilder::new(root);
-    if let Some(err) = builder.add(&ignore_path) {
+    if gitignore_exists && let Some(err) = builder.add(&gitignore_path) {
+        return Err(err).context("failed to read .gitignore");
+    }
+    if aicommitignore_exists && let Some(err) = builder.add(&aicommitignore_path) {
         return Err(err).context("failed to read .aicommitignore");
     }
     let matcher = builder.build()?;
@@ -361,6 +369,52 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn filter_ignored_returns_all_when_no_ignore_files() {
+        let temp = TempDir::new().unwrap();
+        let files = vec!["src.txt".to_owned(), "lib.rs".to_owned()];
+        let result = filter_ignored(temp.path(), files.clone()).unwrap();
+        assert_eq!(result, files);
+    }
+
+    #[test]
+    fn filter_ignored_uses_gitignore_alone() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join(".gitignore"), "*.log\ntarget/\n").unwrap();
+        let files = vec![
+            "src.txt".to_owned(),
+            "debug.log".to_owned(),
+            "target/release/binary".to_owned(),
+        ];
+        let result = filter_ignored(temp.path(), files).unwrap();
+        assert_eq!(result, vec!["src.txt".to_owned()]);
+    }
+
+    #[test]
+    fn filter_ignored_merges_gitignore_and_aicommitignore() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join(".gitignore"), "*.log\n").unwrap();
+        std::fs::write(temp.path().join(".aicommitignore"), "secret.env\n").unwrap();
+        let files = vec![
+            "src.txt".to_owned(),
+            "debug.log".to_owned(),
+            "secret.env".to_owned(),
+        ];
+        let result = filter_ignored(temp.path(), files).unwrap();
+        assert_eq!(result, vec!["src.txt".to_owned()]);
+    }
+
+    #[test]
+    fn filter_ignored_aicommitignore_overrides_gitignore_negation() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join(".gitignore"), "*.log\n!important.log\n").unwrap();
+        std::fs::write(temp.path().join(".aicommitignore"), "important.log\n").unwrap();
+        let files = vec!["debug.log".to_owned(), "important.log".to_owned()];
+        let result = filter_ignored(temp.path(), files).unwrap();
+        // .gitignore negates important.log, but .aicommitignore re-ignores it
+        assert!(result.is_empty());
     }
 
     fn init_repo() -> TempDir {
