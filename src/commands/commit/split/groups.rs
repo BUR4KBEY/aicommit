@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 use crate::{prompt::SplitPlanGroup, ui};
 
@@ -48,7 +48,7 @@ fn build_manual_split_groups(staged_files: &[String]) -> Result<Vec<SplitPlanGro
         if selection.is_empty() {
             bail!("no files selected");
         }
-        if selection.len() == remaining.len() {
+        if remaining.len() > 2 && selection.len() == remaining.len() {
             bail!("select fewer than all remaining files to create multiple commits");
         }
 
