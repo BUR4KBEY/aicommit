@@ -11,6 +11,13 @@ messages = [
     "choosing the perfect emoji",
     "resisting the urge to write 'fix stuff'",
     "wondering what 'wip' really meant",
+    "reading between the changed lines",
+    "considering the bigger picture",
+    "practicing commit message minimalism",
+    "checking if this counts as a feat or a fix",
+    "appreciating a well-named variable",
+    "sizing up the blast radius",
+    "hoping the tests were updated too",
 ]
 
 [splitting]
@@ -20,6 +27,10 @@ messages = [
     "packing chunks under the budget",
     "slicing the diff into bite-sized pieces",
     "negotiating with the token budget",
+    "portioning out the changes",
+    "measuring twice, chunking once",
+    "playing tetris with hunks",
+    "drawing chunk boundaries responsibly",
 ]
 
 [summary]
@@ -30,6 +41,11 @@ messages = [
     "tracking file-level intent",
     "squinting at the whitespace changes",
     "quietly admiring the refactor",
+    "boiling this chunk down to its essence",
+    "spotting the load-bearing change",
+    "filing the plot points for later",
+    "separating signal from churn",
+    "taking notes like it's a lecture",
 ]
 
 [synthesis]
@@ -39,6 +55,11 @@ messages = [
     "drafting the final wording",
     "debating the scope name",
     "trimming the subject line",
+    "assembling the full story",
+    "reconciling conflicting narratives",
+    "picking a verb with conviction",
+    "sanding down the rough edges",
+    "resisting a second bullet point",
 ]
 
 # Occasionally swapped in regardless of stage. Keep these short and fun.
@@ -49,4 +70,13 @@ messages = [
     "asking git to be reasonable",
     "pretending to read Cargo.lock",
     "aligning the semicolons spiritually",
+    "blaming git blame",
+    "whispering encouragement to the CI",
+    "checking under the merge conflicts for loose change",
+    "wondering who force-pushed to main",
+    "counting to HEAD~1 and back",
+    "interrogating a suspicious TODO",
+    "petting the repository gently",
+    "rehearsing the changelog voice",
+    "untangling the branch name's backstory",
 ]
