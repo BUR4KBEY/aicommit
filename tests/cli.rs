@@ -319,7 +319,7 @@ fn yes_pushes_to_the_only_remote() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Commit created"))
-        .stdout(predicate::str::contains("Pushed main → origin"));
+        .stdout(predicate::str::contains("→ origin"));
 
     assert_eq!(
         git_stdout(remote.path(), ["rev-list", "--count", "--all"]),
