@@ -23,16 +23,26 @@ pub(crate) async fn generate_split_commit_drafts(
 ) -> Result<Vec<SplitCommitDraft>> {
     let mut drafts = Vec::with_capacity(groups.len());
 
-    for group in groups {
+    for (index, group) in groups.iter().enumerate() {
         let group_diff = git::staged_diff(&group.files)?;
+        let draft_label = format!("commit {}/{}", index + 1, groups.len());
+        let spinner = ui::StatusSpinner::start(
+            format!("Drafting {}: {}", draft_label, group.title),
+            ui::StatusPool::Waiting,
+        );
+        let progress = |event: generator::GenerationProgress| {
+            spinner.on_generation_progress(event, &draft_label)
+        };
         let mut message = generator::generate_commit_message(
             config,
             &group_diff,
             full_gitmoji_spec,
             context,
             &group.files,
+            Some(&progress),
         )
         .await?;
+        spinner.finish_and_clear();
         message = apply_message_template(config, extra_args, &message);
         drafts.push(SplitCommitDraft {
             group: group.clone(),

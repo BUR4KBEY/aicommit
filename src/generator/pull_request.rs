@@ -11,6 +11,8 @@ use crate::{
     token::{count_messages, split_diff},
 };
 
+use super::{GenerationProgress, ProgressFn, report};
+
 const TOKEN_ADJUSTMENT: usize = 20;
 
 #[allow(clippy::too_many_arguments)]
@@ -23,6 +25,7 @@ pub async fn generate_pull_request(
     ticket: Option<&str>,
     commits: &[CommitInfo],
     changed_files: &[String],
+    progress: Option<ProgressFn<'_>>,
 ) -> Result<PullRequestDraft> {
     let prompt_tokens = count_messages(&build_pr_messages(
         config,
@@ -40,10 +43,18 @@ pub async fn generate_pull_request(
         .saturating_sub(prompt_tokens)
         .saturating_sub(TOKEN_ADJUSTMENT);
 
+    report(progress, GenerationProgress::Splitting);
     let chunks = split_diff(diff, max_request_tokens.max(1))?;
     let engine = engine_from_config(config)?;
 
     if chunks.len() == 1 {
+        report(
+            progress,
+            GenerationProgress::Chunk {
+                current: 1,
+                total: 1,
+            },
+        );
         let messages = build_pr_messages(
             config,
             &chunks[0],
@@ -60,6 +71,13 @@ pub async fn generate_pull_request(
 
     let mut partial_summaries = Vec::with_capacity(chunks.len());
     for (index, chunk) in chunks.iter().enumerate() {
+        report(
+            progress,
+            GenerationProgress::Chunk {
+                current: index + 1,
+                total: chunks.len(),
+            },
+        );
         let messages = build_pr_chunk_summary_messages(
             config,
             chunk,
@@ -75,6 +93,7 @@ pub async fn generate_pull_request(
         partial_summaries.push(engine.generate_commit_message(&messages).await?);
     }
 
+    report(progress, GenerationProgress::Synthesizing);
     let synthesis_messages = build_pr_synthesis_messages(
         config,
         &partial_summaries,

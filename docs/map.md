@@ -17,7 +17,7 @@ aic map tree -o treemap.svg      # custom output path
 |------------|--------------------|--------------------------------------------|
 | `-o`       | `aic-treemap.svg`  | Output file path                           |
 | `--no-ai`  | off                | Skip AI cluster annotation (reserved)      |
-| `--theme`  | `default-light`    | Color theme                                |
+| `--theme`  | `github-light`     | Color theme                                |
 
 ![Treemap example (Dracula theme)](maps/treemap-dracula.svg)
 
@@ -34,7 +34,7 @@ aic map history -n 40            # last 40 commits
 |------|---------------------|---------------------------------|
 | `-o` | `aic-timeline.svg`  | Output file path                |
 | `-n` | `20`                | Number of commits to include    |
-| `--theme` | `default-light` | Color theme                    |
+| `--theme` | `github-light` | Color theme                    |
 
 ![Timeline example (GitHub Dark theme)](maps/timeline-github-dark.svg)
 
@@ -51,7 +51,7 @@ aic map heat -n 200 -o heat.svg  # deeper history
 |------|--------------------|-----------------------------------|
 | `-o` | `aic-heatmap.svg`  | Output file path                  |
 | `-n` | `50`               | Number of commits to analyze      |
-| `--theme` | `default-light` | Color theme                     |
+| `--theme` | `github-light` | Color theme                     |
 
 ![Heatmap example (Monokai theme)](maps/heatmap-monokai.svg)
 
@@ -68,7 +68,7 @@ aic map activity -n 1000         # larger sample
 |------|----------------------|---------------------------------|
 | `-o` | `aic-activity.svg`   | Output file path                |
 | `-n` | `500`                | Number of commits to load       |
-| `--theme` | `default-light`  | Color theme                    |
+| `--theme` | `github-light`  | Color theme                    |
 
 ![Activity example (Solarized Dark theme)](maps/activity-solarized-dark.svg)
 

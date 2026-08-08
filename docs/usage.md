@@ -115,7 +115,7 @@ Optionally focus the review on a particular concern:
 aic review --context "focus on security"
 ```
 
-Findings are grouped by severity (Critical, Warning, Suggestion) and cover bugs, security, performance, correctness, and readability. Large diffs are automatically chunked and synthesized into a single review.
+Findings are grouped by severity (Critical, Warning, Suggestion) and cover bugs, security, performance, correctness, and readability. Large diffs are automatically chunked and synthesized into a single review — the same chunking applies to `aic` commit generation and `aic pr` drafts, with the spinner reporting per-chunk progress and elapsed time while the requests run.
 
 If files are already staged, `aic review` analyzes that staged set directly. In an interactive terminal, if nothing is staged, it reuses the staging menu so you can stage all changes or pick files first, but it keeps the review flow read-only once files are staged.
 

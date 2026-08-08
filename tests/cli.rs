@@ -171,7 +171,7 @@ fn top_level_help_describes_all_visible_commands() {
             "models       List available models for the configured provider",
         ))
         .stdout(predicate::str::contains(
-            "hook         Manage the Git commit-msg hook",
+            "hook         Manage the Git prepare-commit-msg hook",
         ))
         .stdout(predicate::str::contains(
             "pr           Generate a pull request title and description",

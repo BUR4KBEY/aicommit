@@ -24,3 +24,6 @@ rebase-exec.sh
 CLAUDE.md
 **/CLAUDE.md
 .claude
+
+# graphify knowledge-graph output and caches
+graphify-out/

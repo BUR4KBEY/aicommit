@@ -29,8 +29,17 @@ pub async fn run(
         let diff = git::commit_diff(&commit.hash)?;
         let files = git::commit_files(&commit.hash)?;
 
-        let spinner = ui::spinner(format!("Generating message for {}", &commit.hash[..8]));
-        let message = generator::generate_commit_message(&config, &diff, false, "", &files).await?;
+        let spinner = ui::StatusSpinner::start(
+            format!("Generating message for {}", &commit.hash[..8]),
+            ui::StatusPool::Waiting,
+        );
+        let hash_label = format!("message for {}", &commit.hash[..8]);
+        let progress = |event: generator::GenerationProgress| {
+            spinner.on_generation_progress(event, &hash_label)
+        };
+        let message =
+            generator::generate_commit_message(&config, &diff, false, "", &files, Some(&progress))
+                .await?;
         spinner.finish_and_clear();
         new_messages.push(message);
     }

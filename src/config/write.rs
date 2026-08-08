@@ -41,7 +41,9 @@ pub fn write_global_config(config: &Config, global_path: &Path) -> Result<()> {
         }
 
         doc[key] = match key {
-            "AIC_TOKENS_MAX_INPUT" | "AIC_TOKENS_MAX_OUTPUT" => value.parse::<i64>()?.into(),
+            "AIC_TOKENS_MAX_INPUT" | "AIC_TOKENS_MAX_OUTPUT" | "AIC_HTTP_TIMEOUT" => {
+                value.parse::<i64>()?.into()
+            }
             "AIC_DESCRIPTION"
             | "AIC_EMOJI"
             | "AIC_ONE_LINE_COMMIT"

@@ -65,7 +65,11 @@ pub async fn run(
             "Sending to {}/{}",
             config.ai_provider, config.model
         ));
-        let spinner = ui::spinner("Generating pull request draft");
+        let spinner =
+            ui::StatusSpinner::start("Generating pull request draft", ui::StatusPool::Waiting);
+        let progress = |event: generator::GenerationProgress| {
+            spinner.on_generation_progress(event, "pull request draft")
+        };
         let draft = generator::generate_pull_request(
             &config,
             &diff,
@@ -75,6 +79,7 @@ pub async fn run(
             ticket.as_deref(),
             &commits,
             &changed_files,
+            Some(&progress),
         )
         .await;
         spinner.finish_and_clear();

@@ -66,9 +66,14 @@ pub(crate) async fn maybe_execute_split_flow(
         _ => bail!("invalid split selection"),
     }
 
-    let spinner = ui::spinner("Analyzing staged changes for split groups");
+    let spinner = ui::StatusSpinner::start(
+        "Analyzing staged changes for split groups",
+        ui::StatusPool::Waiting,
+    );
+    let progress =
+        |event: generator::GenerationProgress| spinner.on_generation_progress(event, "split plan");
     let suggested_groups =
-        generator::generate_split_plan(config, diff, context, staged_files).await;
+        generator::generate_split_plan(config, diff, context, staged_files, Some(&progress)).await;
     spinner.finish_and_clear();
 
     let suggested_groups = match suggested_groups {
@@ -140,13 +145,18 @@ pub(crate) async fn generate_confirm_and_commit(
             "Sending to {}/{}",
             config.ai_provider, config.model
         ));
-        let spinner = ui::spinner("Generating commit message");
+        let spinner =
+            ui::StatusSpinner::start("Generating commit message", ui::StatusPool::Waiting);
+        let progress = |event: generator::GenerationProgress| {
+            spinner.on_generation_progress(event, "commit message")
+        };
         let commit_message = generator::generate_commit_message(
             config,
             diff,
             full_gitmoji_spec,
             context,
             staged_files,
+            Some(&progress),
         )
         .await;
         spinner.finish_and_clear();

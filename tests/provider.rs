@@ -6,7 +6,7 @@ use aicommit::{
     config::Config,
     generator,
     git::CommitInfo,
-    prompt::build_pr_messages,
+    prompt::{build_pr_messages, initial_messages},
     token::{count_messages, count_tokens},
 };
 use wiremock::{
@@ -287,6 +287,7 @@ async fn generate_pull_request_synthesizes_chunked_diff() {
         None,
         &commits,
         &files,
+        None,
     )
     .await
     .unwrap();
@@ -294,4 +295,71 @@ async fn generate_pull_request_synthesizes_chunked_diff() {
     assert_eq!(draft.title, "feat(cli): generate PR drafts");
     assert!(draft.body.contains("## Summary"));
     assert!(draft.body.contains("## Testing"));
+}
+
+#[tokio::test]
+async fn generate_commit_message_synthesizes_chunked_diff() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_string_contains("This is diff chunk"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [
+                { "message": { "content": "capture one slice of the staged diff" } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_string_contains(
+            "Partial summaries from a large staged diff",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [
+                { "message": { "content": "feat(cli): handle very large staged diffs" } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let config = Config {
+        api_key: Some("key".to_owned()),
+        api_url: Some(format!("{}/v1", server.uri())),
+        // The commit system prompt plus few-shot examples is ~600 tokens, so
+        // the cap must leave real chunk budget on top of that.
+        tokens_max_input: 3000,
+        tokens_max_output: 80,
+        ..Config::default()
+    };
+    let files = vec!["src/cli.rs".to_owned()];
+    let prompt_tokens = count_messages(&initial_messages(&config, false, "", &files).unwrap());
+    let available = config
+        .tokens_max_input
+        .saturating_sub(config.tokens_max_output)
+        .saturating_sub(prompt_tokens)
+        .saturating_sub(20)
+        .max(1);
+    let mut diff = "diff --git a/src/cli.rs b/src/cli.rs\n".to_owned();
+    while count_tokens(&diff) <= available {
+        diff.push_str("@@\n+new line in chunked diff\n");
+    }
+
+    let events = std::sync::Mutex::new(Vec::new());
+    let progress = |event: generator::GenerationProgress| events.lock().unwrap().push(event);
+
+    let message =
+        generator::generate_commit_message(&config, &diff, false, "", &files, Some(&progress))
+            .await
+            .unwrap();
+
+    assert_eq!(message, "feat(cli): handle very large staged diffs");
+
+    let events = events.into_inner().unwrap();
+    assert!(events.contains(&generator::GenerationProgress::Splitting));
+    assert!(events.iter().any(
+        |event| matches!(event, generator::GenerationProgress::Chunk { total, .. } if *total > 1)
+    ));
+    assert!(events.contains(&generator::GenerationProgress::Synthesizing));
 }

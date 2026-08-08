@@ -1,0 +1,52 @@
+# Rotating status details shown next to the spinner stage while the AI works.
+# Copy this file to ~/.aicommit-status.toml to override any section; sections
+# you leave out (or leave empty) keep these built-in messages.
+
+[waiting]
+messages = [
+    "reading the diff",
+    "weighing the changes",
+    "waiting on the model",
+    "thinking in conventional commits",
+    "choosing the perfect emoji",
+    "resisting the urge to write 'fix stuff'",
+    "wondering what 'wip' really meant",
+]
+
+[splitting]
+messages = [
+    "counting tokens",
+    "grouping hunks",
+    "packing chunks under the budget",
+    "slicing the diff into bite-sized pieces",
+    "negotiating with the token budget",
+]
+
+[summary]
+messages = [
+    "condensing changes",
+    "noting renames and moves",
+    "reading test updates",
+    "tracking file-level intent",
+    "squinting at the whitespace changes",
+    "quietly admiring the refactor",
+]
+
+[synthesis]
+messages = [
+    "merging chunk summaries",
+    "weighing candidate subjects",
+    "drafting the final wording",
+    "debating the scope name",
+    "trimming the subject line",
+]
+
+# Occasionally swapped in regardless of stage. Keep these short and fun.
+[rare]
+messages = [
+    "consulting the commit message elders",
+    "rolling a d20 for the gitmoji",
+    "asking git to be reasonable",
+    "pretending to read Cargo.lock",
+    "aligning the semicolons spiritually",
+]

@@ -1,12 +1,22 @@
+use std::sync::OnceLock;
+
 use anyhow::Result;
-use tiktoken_rs::cl100k_base;
+use tiktoken_rs::{CoreBPE, cl100k_base};
 
 use crate::ai::ChatMessage;
 
+// Building the cl100k BPE encoder parses a ~100k-entry vocabulary and costs
+// tens of milliseconds; doing it per count_tokens call made split_diff
+// quadratic on large diffs. Build it once and keep the whitespace fallback.
+fn encoder() -> Option<&'static CoreBPE> {
+    static ENCODER: OnceLock<Option<CoreBPE>> = OnceLock::new();
+    ENCODER.get_or_init(|| cl100k_base().ok()).as_ref()
+}
+
 pub fn count_tokens(input: &str) -> usize {
-    match cl100k_base() {
-        Ok(encoder) => encoder.encode_with_special_tokens(input).len(),
-        Err(_) => input.split_whitespace().count(),
+    match encoder() {
+        Some(encoder) => encoder.encode_with_special_tokens(input).len(),
+        None => input.split_whitespace().count(),
     }
 }
 
@@ -26,29 +36,34 @@ pub fn split_diff(diff: &str, max_tokens: usize) -> Result<Vec<String>> {
 
     let mut chunks = Vec::new();
     let mut current = String::new();
+    // Running sum of per-line counts (+1 per newline join). Counting each line
+    // once keeps this linear; the sum slightly over-estimates the joined text's
+    // count, so chunks stay within budget.
+    let mut current_tokens = 0usize;
 
     for line in diff.lines() {
-        let proposed = if current.is_empty() {
-            line.to_owned()
-        } else {
-            format!("{current}\n{line}")
-        };
+        let line_tokens = count_tokens(line);
+        let joiner = usize::from(!current.is_empty());
 
-        if count_tokens(&proposed) > max_tokens {
+        if current_tokens + joiner + line_tokens > max_tokens {
             if current.is_empty() {
                 chunks.extend(split_long_line(line, max_tokens)?);
-                current.clear();
                 continue;
             }
-            chunks.push(current);
-            if count_tokens(line) > max_tokens {
+            chunks.push(std::mem::take(&mut current));
+            current_tokens = 0;
+            if line_tokens > max_tokens {
                 chunks.extend(split_long_line(line, max_tokens)?);
-                current = String::new();
             } else {
-                current = line.to_owned();
+                current.push_str(line);
+                current_tokens = line_tokens;
             }
         } else {
-            current = proposed;
+            if joiner == 1 {
+                current.push('\n');
+            }
+            current.push_str(line);
+            current_tokens += joiner + line_tokens;
         }
     }
 
@@ -100,6 +115,40 @@ mod tests {
         let chunks = split_diff(line.trim(), 10).unwrap();
         assert!(chunks.len() > 1);
         assert_eq!(chunks.join(""), line.trim());
+    }
+
+    #[test]
+    fn split_diff_chunks_multi_line_diff_losslessly() {
+        let diff = (0..200)
+            .map(|i| format!("line {i} with some diff content"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let max_tokens = 50;
+        let chunks = split_diff(&diff, max_tokens).unwrap();
+
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            assert!(count_tokens(chunk) <= max_tokens);
+        }
+        let rejoined = chunks
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(rejoined, diff);
+    }
+
+    #[test]
+    fn split_diff_handles_large_diff_quickly() {
+        // Regression tripwire for the quadratic re-tokenization cliff: a
+        // multi-thousand-line over-budget diff must split in well under CI
+        // timeout territory (previously this shape took minutes to hours).
+        let diff = (0..20_000)
+            .map(|i| format!("+    let value_{i} = compute_something({i});"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let chunks = split_diff(&diff, 2_000).unwrap();
+        assert!(chunks.len() > 1);
     }
 
     #[test]

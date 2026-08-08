@@ -54,6 +54,7 @@ AIC_API_CUSTOM_HEADERS
 AIC_PROXY
 AIC_TOKENS_MAX_INPUT
 AIC_TOKENS_MAX_OUTPUT
+AIC_HTTP_TIMEOUT
 AIC_DESCRIPTION
 AIC_EMOJI
 AIC_MODEL
@@ -68,6 +69,24 @@ AIC_HOOK_AUTO_UNCOMMENT
 ```
 
 `AIC_TOKENS_MAX_INPUT` defaults to `128000` for new configs.
+
+`AIC_HTTP_TIMEOUT` caps each API request to the HTTP providers (`openai`, `azure-openai`, `anthropic`, `groq`, `ollama`) in seconds. It defaults to `120`; set it to `0` to disable the timeout entirely, or raise it if a slow local model (for example Ollama on a large prompt) needs more time. Local CLI providers (`claude-code`, `codex`, `copilot`) are not affected.
+
+## Large diffs
+
+When the staged diff exceeds the input token budget (`AIC_TOKENS_MAX_INPUT` minus `AIC_TOKENS_MAX_OUTPUT` and prompt overhead), `aic`, `aic review`, and `aic pr` split the diff into chunks, summarize each chunk with its own AI request, and synthesize the partial summaries into one final result. The spinner reports each stage (`Summarizing chunk 2/4`, `Synthesizing commit message`) so long runs are visibly progressing.
+
+Each chunk costs one AI request, so very large diffs take proportionally longer. To keep diffs small, exclude bulky generated files from AI input with `.aicommitignore` (see the Prompt Template section below), and note that lockfiles and common image formats are already filtered out of the staged diff automatically.
+
+While a generation runs, the spinner rotates through short status lines alongside the current stage. The built-in lines live in `src/status_messages.toml`; create `~/.aicommit-status.toml` with the same structure to replace any section with your own (sections you omit keep the defaults):
+
+```toml
+[waiting]
+messages = ["contemplating the diff", "..."]
+
+[rare]
+messages = ["asking git to be reasonable"]
+```
 
 Example one-off environment override:
 
