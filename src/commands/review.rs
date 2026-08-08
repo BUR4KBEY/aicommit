@@ -20,7 +20,8 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         bail!(AicError::MissingApiKey(config.ai_provider));
     }
 
-    super::commit::ensure_staged_files(false, "Review session", false).await?;
+    ui::section("Review session");
+    super::commit::ensure_staged_files(false, false).await?;
     let staged = git::staged_files()?;
     if staged.is_empty() {
         bail!(AicError::NoChanges);
@@ -31,7 +32,6 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         bail!("no diff content available after applying ignore and binary filters");
     }
 
-    ui::section("Review session");
     ui::session_step(format!(
         "Reading staged diff ({}, {} lines)",
         ui::file_count_label(staged.len()),
@@ -39,8 +39,9 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
     ));
     let mut context_items = Vec::new();
     if let Some(branch) = git::current_branch() {
-        context_items.push(format!("branch: {branch}"));
+        context_items.push(branch);
     }
+    context_items.push(format!("{}/{}", config.ai_provider, config.model));
     if let Some(ticket) = git::ticket_from_branch() {
         context_items.push(format!("ticket: {ticket}"));
     }
@@ -52,15 +53,7 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         context_items.push("extra context provided".to_owned());
     }
     ui::metadata_row(&context_items);
-    ui::metadata_row(&[
-        format!("provider: {}", config.ai_provider),
-        format!("model: {}", config.model),
-    ]);
     ui::file_list("Staged changes", &staged);
-    ui::session_step(format!(
-        "Sending to {}/{}",
-        config.ai_provider, config.model
-    ));
     let spinner = ui::StatusSpinner::start("Analyzing changes", ui::StatusPool::Waiting);
     let progress = |event: crate::generator::GenerationProgress| {
         spinner.on_generation_progress(event, "review")
@@ -69,7 +62,6 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
     spinner.finish_and_clear();
 
     let review = review?;
-    ui::blank_line();
     ui::markdown_card("AI review", &review);
 
     let history_saved = match history_store::append_entry(&history_store::HistoryEntry {
@@ -90,14 +82,13 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         }
     };
 
-    ui::blank_line();
     ui::section("Review complete");
     let mut completion_items = vec![format!("analyzed: {}", ui::file_count_label(staged.len()))];
     if history_saved {
         completion_items.push("history: saved".to_owned());
     }
     ui::metadata_row(&completion_items);
-    ui::secondary(
+    ui::hint(
         "Next: update the staged changes and run `aic review` again, or run `aic` when you're ready to draft a commit.",
     );
 

@@ -141,10 +141,6 @@ pub(crate) async fn generate_confirm_and_commit(
     staged_files: &[String],
 ) -> Result<()> {
     loop {
-        ui::session_step(format!(
-            "Sending to {}/{}",
-            config.ai_provider, config.model
-        ));
         let spinner =
             ui::StatusSpinner::start("Generating commit message", ui::StatusPool::Waiting);
         let progress = |event: generator::GenerationProgress| {
@@ -164,7 +160,6 @@ pub(crate) async fn generate_confirm_and_commit(
         let commit_message =
             super::super::apply_message_template(config, extra_args, &commit_message?);
 
-        ui::blank_line();
         ui::primary_card("Generated commit", &commit_message);
 
         if dry_run {
@@ -192,7 +187,7 @@ pub(crate) async fn generate_confirm_and_commit(
                 .await;
             }
             EDIT_OPTION => {
-                let edited = ui::text("Edit commit message", Some(&commit_message))?;
+                let edited = ui::editor("Edit commit message", &commit_message)?;
                 return super::super::push::commit_and_maybe_push(
                     config,
                     &edited,

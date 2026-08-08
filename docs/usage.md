@@ -13,6 +13,8 @@ When the staged change set only contains filtered or binary files such as images
 
 When at least two files are staged in the normal interactive flow, `aic` can also split the change set into multiple file-group commits. It first suggests commit groups with AI, then lets you accept the groups, rebuild them manually, or fall back to one commit.
 
+Once a message is generated you can accept it, regenerate, or edit it; `Edit` opens your `$EDITOR` with the message preloaded. After a successful push, `aic` prints a one-line confirmation (`Pushed main → origin`) and a final `Commit created` summary with the short hash, branch, remote, and a `+added −removed` diffstat. In terminals that support hyperlinks, the hash links straight to the commit page on GitHub, GitLab, or Bitbucket.
+
 Skip the commit prompts and auto-stage all changed files. If push-after-commit is enabled and exactly one remote exists, `aic --yes` also pushes automatically:
 
 ```sh
@@ -21,7 +23,7 @@ aic --yes
 
 If multiple remotes are configured, `aic --yes` stops with a clear error instead of guessing where to push.
 
-When push-after-commit is enabled and the current branch tracks an upstream, `aic` fetches that upstream before it starts the commit session. If the branch is behind or has diverged, `aic` stops before creating a new commit and shows recovery guidance so you can sync safely first.
+When push-after-commit is enabled and the current branch tracks an upstream, `aic` fetches that upstream before it starts the commit session (with a "Checking branch sync" spinner while the fetch runs). If the branch is behind or has diverged, `aic` stops before creating a new commit and shows recovery guidance so you can sync safely first.
 
 Add extra context for the generated message:
 

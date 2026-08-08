@@ -36,7 +36,7 @@ pub async fn run(provider_override: Option<String>, refresh: bool) -> Result<()>
 
     if is_local_cli_provider(&provider) {
         ui::section(format!("Available models for {provider}"));
-        println!("* {}", config.model);
+        ui::info(format!("❯ {}", config.model));
         let binary = match provider.as_str() {
             "claude-code" => "`claude`",
             "codex" => "`codex exec`",
@@ -80,9 +80,9 @@ pub async fn run(provider_override: Option<String>, refresh: bool) -> Result<()>
     } else {
         for model in models {
             if model == config.model {
-                println!("* {model}");
+                ui::info(format!("❯ {model}"));
             } else {
-                println!("  {model}");
+                ui::secondary(model);
             }
         }
     }

@@ -205,6 +205,7 @@ pub fn command() -> clap::Command {
 }
 
 pub async fn run() -> Result<()> {
+    crate::ui::init_prompt_theme();
     let mut matches = command().get_matches();
     let cli = Cli::from_arg_matches_mut(&mut matches)?;
 

@@ -43,10 +43,12 @@ pub async fn run(
         ui::file_count_label(changed_files.len()),
         diff.lines().count()
     ));
-    let mut session_items = vec![format!("base: {base_ref}")];
+    let mut session_items = Vec::new();
     if let Some(branch_name) = &branch_name {
-        session_items.push(format!("branch: {branch_name}"));
+        session_items.push(branch_name.clone());
     }
+    session_items.push(format!("base: {base_ref}"));
+    session_items.push(format!("{}/{}", config.ai_provider, config.model));
     if let Some(ticket) = &ticket {
         session_items.push(format!("ticket: {ticket}"));
     }
@@ -54,17 +56,9 @@ pub async fn run(
         session_items.push("extra context provided".to_owned());
     }
     ui::metadata_row(&session_items);
-    ui::metadata_row(&[
-        format!("provider: {}", config.ai_provider),
-        format!("model: {}", config.model),
-    ]);
     ui::file_list("Changed files", &changed_files);
 
     loop {
-        ui::session_step(format!(
-            "Sending to {}/{}",
-            config.ai_provider, config.model
-        ));
         let spinner =
             ui::StatusSpinner::start("Generating pull request draft", ui::StatusPool::Waiting);
         let progress = |event: generator::GenerationProgress| {
@@ -85,12 +79,10 @@ pub async fn run(
         spinner.finish_and_clear();
 
         let draft = draft?;
+        preview(&draft.title, &draft.body);
         if skip_confirmation {
             return finish(&config, &draft.title, &draft.body, &changed_files);
         }
-
-        ui::blank_line();
-        preview(&draft.title, &draft.body);
 
         let action = ui::select(
             "Use this pull request draft?",
@@ -102,6 +94,7 @@ pub async fn run(
             "Edit" => {
                 let edited_title = ui::text("Edit PR title", Some(&draft.title))?;
                 let edited_body = ui::editor("Edit PR description", &draft.body)?;
+                preview(edited_title.trim(), edited_body.trim());
                 return finish(
                     &config,
                     edited_title.trim(),
@@ -116,9 +109,7 @@ pub async fn run(
 }
 
 fn preview(title: &str, body: &str) {
-    ui::blank_line();
     ui::primary_card("PR title", title);
-    ui::blank_line();
     ui::markdown_card(
         "PR description",
         if body.is_empty() { "(empty)" } else { body },
@@ -131,8 +122,6 @@ fn finish(config: &Config, title: &str, body: &str, changed_files: &[String]) ->
     }
 
     let message = pr_message(title, body);
-
-    preview(title.trim(), body.trim());
 
     if let Err(error) = history_store::append_entry(&HistoryEntry {
         timestamp: history_store::now_iso8601(),
@@ -148,7 +137,6 @@ fn finish(config: &Config, title: &str, body: &str, changed_files: &[String]) ->
         ui::warn(format!("failed to save history: {error}"));
     }
 
-    ui::blank_line();
     ui::success("Generated pull request draft");
     Ok(())
 }

@@ -1,23 +1,29 @@
 # Remote host metadata used to label push prompts.
 # Add providers here before changing Rust code when a host only needs label/host matching.
+# commit_path is the URL segment between the repo web URL and a commit hash
+# (e.g. "commit" -> https://host/user/repo/commit/<hash>); omit it when the
+# provider's commit URLs are not shaped that way.
 
 [[providers]]
 label = "GitHub"
 nerd_font_icon = ""
 emoji_icon = "🐙"
 hosts = ["github.com"]
+commit_path = "commit"
 
 [[providers]]
 label = "Bitbucket"
 nerd_font_icon = ""
 emoji_icon = "🪣"
 hosts = ["bitbucket.org"]
+commit_path = "commits"
 
 [[providers]]
 label = "GitLab"
 nerd_font_icon = ""
 emoji_icon = "🦊"
 hosts = ["gitlab.com"]
+commit_path = "-/commit"
 
 [[providers]]
 label = "Azure DevOps"

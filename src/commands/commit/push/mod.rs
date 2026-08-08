@@ -16,7 +16,7 @@ const KEEP_LOCAL_COMMIT_OPTION: &str = "Keep local commit only";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PushOutcome {
     Skipped,
-    Pushed(String),
+    Pushed(PushRemoteOption),
 }
 
 pub(crate) async fn commit_and_maybe_push(
@@ -41,24 +41,64 @@ pub(crate) async fn commit_and_maybe_push(
 
     let push_outcome = execute_push_plan(push_plan, config, skip_confirmation).await?;
 
-    crate::ui::blank_line();
     crate::ui::section("Commit created");
     let mut items = Vec::new();
     if let Some(commit_hash) = commit_hash {
-        items.push(format!("hash: {commit_hash}"));
+        let commit_url = match &push_outcome {
+            PushOutcome::Pushed(remote) => remote
+                .commit_url_base
+                .as_ref()
+                .map(|base| format!("{base}/{commit_hash}")),
+            PushOutcome::Skipped => None,
+        };
+        items.push(match commit_url {
+            Some(url) => crate::ui::hyperlink(&commit_hash, &url),
+            None => commit_hash,
+        });
     }
     if let Some(branch) = branch {
-        items.push(format!("branch: {branch}"));
+        items.push(branch);
     }
     if let PushOutcome::Pushed(remote) = &push_outcome {
-        items.push(format!("pushed: {remote}"));
+        items.push(format!("pushed to {}", remote.summary));
+    }
+    if let Some(diffstat) = diffstat_summary(&output.stdout) {
+        items.push(diffstat);
     }
     crate::ui::metadata_row(&items);
     crate::ui::headline(message.lines().next().unwrap_or(message));
 
-    render_git_output(&output);
-
     Ok(())
+}
+
+/// Condense git commit's " 3 files changed, 40 insertions(+), 2 deletions(-)"
+/// stat line into "+40 −2".
+fn diffstat_summary(commit_stdout: &str) -> Option<String> {
+    let stat_line = commit_stdout
+        .lines()
+        .find(|line| line.contains(" changed"))?;
+    let count_before = |marker: &str| -> Option<u64> {
+        let end = stat_line.find(marker)?;
+        stat_line[..end]
+            .rsplit(|c: char| !c.is_ascii_digit())
+            .find(|part| !part.is_empty())?
+            .parse()
+            .ok()
+    };
+
+    let insertions = count_before(" insertion");
+    let deletions = count_before(" deletion");
+    let mut parts = Vec::new();
+    if let Some(insertions) = insertions {
+        parts.push(format!("+{insertions}"));
+    }
+    if let Some(deletions) = deletions {
+        parts.push(format!("−{deletions}"));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join(" "))
 }
 
 pub(crate) async fn execute_push_plan(
@@ -98,10 +138,9 @@ async fn push_to_remote(
     skip_confirmation: bool,
 ) -> Result<PushOutcome> {
     match crate::git::push(Some(&remote.name)) {
-        Ok(output) => {
-            crate::ui::success(format!("Pushed to {}", remote.label));
-            render_git_output(&output);
-            Ok(PushOutcome::Pushed(remote.label.clone()))
+        Ok(_) => {
+            crate::ui::success(push_success_message(remote));
+            Ok(PushOutcome::Pushed(remote.clone()))
         }
         Err(error) => {
             let message = error.to_string();
@@ -182,10 +221,9 @@ async fn retry_push_after_rebase(
             crate::ui::session_step("Pulled remote changes with rebase");
             render_git_output(&output);
             match crate::git::push(Some(&remote.name)) {
-                Ok(output) => {
-                    crate::ui::success(format!("Pushed to {}", remote.label));
-                    render_git_output(&output);
-                    Ok(PushOutcome::Pushed(remote.label.clone()))
+                Ok(_) => {
+                    crate::ui::success(push_success_message(remote));
+                    Ok(PushOutcome::Pushed(remote.clone()))
                 }
                 Err(error) => {
                     let snapshot = crate::git::fetch_sync_snapshot()?;
@@ -230,6 +268,13 @@ async fn retry_push_after_rebase(
     }
 }
 
+fn push_success_message(remote: &PushRemoteOption) -> String {
+    match crate::git::current_branch() {
+        Some(branch) => format!("Pushed {branch} → {}", remote.name),
+        None => format!("Pushed to {}", remote.name),
+    }
+}
+
 fn render_git_output(output: &crate::git::GitOutput) {
     if !output.stderr.is_empty() {
         crate::ui::secondary(&output.stderr);
@@ -258,23 +303,43 @@ mod tests {
         );
     }
 
+    fn plain_option(name: &str) -> PushRemoteOption {
+        PushRemoteOption {
+            name: name.to_owned(),
+            label: name.to_owned(),
+            summary: name.to_owned(),
+            commit_url_base: None,
+        }
+    }
+
     #[test]
     fn remote_push_options_append_skip() {
-        let options = remote_push_options(&[
-            PushRemoteOption {
-                name: "origin".to_owned(),
-                label: "origin".to_owned(),
-            },
-            PushRemoteOption {
-                name: "backup".to_owned(),
-                label: "backup".to_owned(),
-            },
-        ]);
+        let options = remote_push_options(&[plain_option("origin"), plain_option("backup")]);
 
         assert_eq!(
             options,
             vec!["origin".to_owned(), "backup".to_owned(), "Skip".to_owned()]
         );
+    }
+
+    #[test]
+    fn diffstat_summary_condenses_the_stat_line() {
+        assert_eq!(
+            diffstat_summary(
+                "[main 8c4d5e6] feat: x\n 3 files changed, 40 insertions(+), 2 deletions(-)"
+            ),
+            Some("+40 −2".to_owned())
+        );
+        assert_eq!(
+            diffstat_summary("[main 8c4d5e6] feat: x\n 1 file changed, 1 insertion(+)"),
+            Some("+1".to_owned())
+        );
+        assert_eq!(
+            diffstat_summary("[main 8c4d5e6] chore: x\n 1 file changed, 5 deletions(-)"),
+            Some("−5".to_owned())
+        );
+        assert_eq!(diffstat_summary("[main 8c4d5e6] chore: rename only"), None);
+        assert_eq!(diffstat_summary(""), None);
     }
 
     #[test]
@@ -314,10 +379,7 @@ mod tests {
         let outcome = {
             let _dir = CurrentDirGuard::enter(local.path());
             retry_push_after_rebase(
-                &PushRemoteOption {
-                    name: "origin".to_owned(),
-                    label: "origin".to_owned(),
-                },
+                &plain_option("origin"),
                 &Config {
                     ai_provider: "test".to_owned(),
                     gitpush: true,
@@ -328,7 +390,7 @@ mod tests {
             .unwrap()
         };
 
-        assert_eq!(outcome, PushOutcome::Pushed("origin".to_owned()));
+        assert!(matches!(outcome, PushOutcome::Pushed(remote) if remote.name == "origin"));
         assert_eq!(
             git_stdout(remote.path(), ["rev-list", "--count", "--all"]),
             "3"

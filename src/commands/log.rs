@@ -22,7 +22,7 @@ pub async fn run(
         bail!("no commits found");
     }
 
-    ui::section(format!("Rewriting {} commit messages", commits.len()));
+    ui::section(format!("Rewriting {}", commit_count_label(commits.len())));
 
     let mut new_messages = Vec::with_capacity(commits.len());
     for commit in &commits {
@@ -44,14 +44,15 @@ pub async fn run(
         new_messages.push(message);
     }
 
-    ui::blank_line();
     ui::section("Proposed changes");
     for (commit, new_msg) in commits.iter().zip(new_messages.iter()) {
         ui::blank_line();
         let old_subject = &commit.subject;
         let new_subject = new_msg.lines().next().unwrap_or("");
-        ui::secondary(format!("  {}  {old_subject}", &commit.hash[..8]));
-        ui::info(format!("    → {new_subject}"));
+        // `secondary` indents 2 spaces; pad the arrow line so the new subject
+        // lines up under the old one (2 indent + 8 hash + 2 gap).
+        ui::secondary(format!("{}  {old_subject}", &commit.hash[..8]));
+        ui::info(format!("{:10}→ {new_subject}", ""));
     }
 
     if !skip_confirmation {
@@ -65,6 +66,13 @@ pub async fn run(
     git::reword_commits(commits.len(), &new_messages)?;
     spinner.finish_and_clear();
 
-    ui::success(format!("Rewrote {} commit messages", commits.len()));
+    ui::success(format!("Rewrote {}", commit_count_label(commits.len())));
     Ok(())
+}
+
+fn commit_count_label(count: usize) -> String {
+    match count {
+        1 => "1 commit message".to_owned(),
+        value => format!("{value} commit messages"),
+    }
 }

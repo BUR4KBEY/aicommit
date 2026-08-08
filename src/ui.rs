@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fmt::Display, path::Path};
+use std::{
+    collections::BTreeMap,
+    fmt::Display,
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{Error, Result};
 use console::{Term, style};
@@ -11,12 +16,31 @@ const MAX_CARD_WIDTH: usize = 92;
 const DEFAULT_FILE_LIMIT: usize = 5;
 const DEFAULT_ROOT_LIMIT: usize = 4;
 
+// Vertical rhythm: sections and cards insert their own leading blank line via
+// `ensure_blank_line`, so callers never manage spacing. The tracker only sees
+// output routed through this module; the invariant holds because nothing else
+// prints to stdout mid-session (never print a section or card while a spinner
+// is live - `finish_and_clear` it first).
+static LAST_LINE_BLANK: AtomicBool = AtomicBool::new(true);
+
+fn mark_printed() {
+    LAST_LINE_BLANK.store(false, Ordering::Relaxed);
+}
+
+fn ensure_blank_line() {
+    if !LAST_LINE_BLANK.swap(true, Ordering::Relaxed) {
+        println!();
+    }
+}
+
 pub fn info(message: impl AsRef<str>) {
     println!("{}", message.as_ref());
+    mark_printed();
 }
 
 pub fn success(message: impl AsRef<str>) {
     println!("{} {}", style("✔").green(), style(message.as_ref()).green());
+    mark_printed();
 }
 
 pub fn warn(message: impl AsRef<str>) {
@@ -28,7 +52,9 @@ pub fn warn(message: impl AsRef<str>) {
 }
 
 pub fn section(title: impl AsRef<str>) {
+    ensure_blank_line();
     println!("{} {}", style("◇").cyan(), style(title.as_ref()).bold());
+    mark_printed();
 }
 
 pub fn session_step(message: impl AsRef<str>) {
@@ -37,20 +63,29 @@ pub fn session_step(message: impl AsRef<str>) {
         style("•").cyan().dim(),
         style(message.as_ref()).dim()
     );
+    mark_printed();
 }
 
 pub fn blank_line() {
     println!();
+    LAST_LINE_BLANK.store(true, Ordering::Relaxed);
 }
 
 pub fn bullet(message: impl AsRef<str>) {
     println!("  {} {}", style("•").cyan().dim(), message.as_ref());
+    mark_printed();
 }
 
 pub fn secondary(message: impl AsRef<str>) {
     for line in message.as_ref().lines() {
         println!("  {}", style(line).dim());
     }
+    mark_printed();
+}
+
+/// A dim next-step nudge, e.g. what to run after a command completes.
+pub fn hint(message: impl AsRef<str>) {
+    secondary(message);
 }
 
 pub fn metadata_row(items: &[String]) {
@@ -63,11 +98,25 @@ pub fn metadata_row(items: &[String]) {
 
 pub fn headline(message: impl AsRef<str>) {
     println!("  {}", style(message.as_ref()).bold());
+    mark_printed();
 }
 
 pub fn file_list(title: impl AsRef<str>, files: &[String]) {
     let title = title.as_ref();
     section(format!("{title} ({})", file_count_label(files.len())));
+    for line in summarize_files(files, DEFAULT_FILE_LIMIT, DEFAULT_ROOT_LIMIT) {
+        bullet(line);
+    }
+}
+
+/// Like `file_list`, but rendered as a dim session step instead of opening a
+/// new `◇` section - for lists that belong under an existing header.
+pub fn file_list_step(title: impl AsRef<str>, files: &[String]) {
+    session_step(format!(
+        "{} ({})",
+        title.as_ref(),
+        file_count_label(files.len())
+    ));
     for line in summarize_files(files, DEFAULT_FILE_LIMIT, DEFAULT_ROOT_LIMIT) {
         bullet(line);
     }
@@ -80,18 +129,6 @@ pub fn file_metadata(files: &[String]) {
         items.push(format!("paths: {summary}"));
     }
     metadata_row(&items);
-}
-
-pub fn commit_message(message: impl AsRef<str>) {
-    for (index, line) in message.as_ref().lines().enumerate() {
-        if index == 0 {
-            println!("  {}", style(line).bold());
-        } else if line.trim().is_empty() {
-            println!();
-        } else {
-            println!("  {line}");
-        }
-    }
 }
 
 pub fn spinner(message: impl Into<String>) -> ProgressBar {
@@ -327,6 +364,7 @@ impl StatusSpinner {
             style("•").cyan().dim(),
             style(message.as_ref()).dim()
         ));
+        mark_printed();
     }
 
     pub fn finish_and_clear(self) {
@@ -356,35 +394,66 @@ impl Drop for StatusSpinner {
 }
 
 pub fn primary_card(title: &str, body: &str) {
+    ensure_blank_line();
     for line in render_card_lines(title, body, card_width()) {
         println!("{line}");
     }
+    mark_printed();
 }
 
 pub fn markdown_card(title: &str, body: &str) {
+    ensure_blank_line();
     for line in render_markdown_card_lines(title, body, card_width()) {
         println!("{line}");
+    }
+    mark_printed();
+}
+
+/// Align inquire's prompt rendering with the module's glyph vocabulary
+/// (`?` pending, `✔` answered, `❯` highlighted). Call once at startup.
+pub fn init_prompt_theme() {
+    use inquire::ui::{Color, RenderConfig, StyleSheet, Styled};
+
+    inquire::set_global_render_config(
+        RenderConfig::default_colored()
+            .with_prompt_prefix(Styled::new("?").with_fg(Color::LightCyan))
+            .with_answered_prompt_prefix(Styled::new("✔").with_fg(Color::LightGreen))
+            .with_answer(StyleSheet::new().with_fg(Color::LightCyan))
+            .with_help_message(StyleSheet::new().with_fg(Color::DarkGrey))
+            .with_highlighted_option_prefix(Styled::new("❯").with_fg(Color::LightCyan)),
+    );
+}
+
+/// Wrap `text` in an OSC-8 terminal hyperlink when stdout is an interactive,
+/// color-capable terminal; plain text otherwise. Never use inside card bodies:
+/// the escape sequence would break their fixed-width borders.
+pub fn hyperlink(text: &str, url: &str) -> String {
+    if console::colors_enabled() && Term::stdout().is_term() {
+        format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
+    } else {
+        text.to_owned()
     }
 }
 
 pub fn confirm(message: &str, default: bool) -> Result<bool> {
-    Ok(Confirm::new(message).with_default(default).prompt()?)
+    let answer = Confirm::new(message).with_default(default).prompt()?;
+    mark_printed();
+    Ok(answer)
 }
 
 pub fn select<T>(message: &str, options: Vec<T>) -> Result<T>
 where
     T: Clone + Display,
 {
-    Ok(Select::new(message, options).prompt()?)
+    let answer = Select::new(message, options).prompt()?;
+    mark_printed();
+    Ok(answer)
 }
 
 pub fn multiselect(message: &str, options: Vec<String>) -> Result<Vec<String>> {
-    Ok(MultiSelect::new(message, options).prompt()?)
-}
-
-pub fn markdown(text: &str) {
-    let skin = markdown_skin();
-    skin.print_text(text);
+    let answer = MultiSelect::new(message, options).prompt()?;
+    mark_printed();
+    Ok(answer)
 }
 
 pub fn text(message: &str, initial: Option<&str>) -> Result<String> {
@@ -394,14 +463,18 @@ pub fn text(message: &str, initial: Option<&str>) -> Result<String> {
     } else {
         prompt
     };
-    Ok(prompt.prompt()?)
+    let answer = prompt.prompt()?;
+    mark_printed();
+    Ok(answer)
 }
 
 pub fn editor(message: &str, initial: &str) -> Result<String> {
-    Ok(Editor::new(message)
+    let answer = Editor::new(message)
         .with_predefined_text(initial)
         .with_file_extension(".md")
-        .prompt()?)
+        .prompt()?;
+    mark_printed();
+    Ok(answer)
 }
 
 pub fn is_prompt_cancelled(error: &Error) -> bool {
@@ -616,6 +689,22 @@ mod tests {
         }
         // Over enough rotations the detail line varies rather than freezing.
         assert!(seen.len() > 2);
+    }
+
+    #[test]
+    fn hyperlink_falls_back_to_plain_text_without_a_terminal() {
+        // Tests run with stdout piped, so the tty gate rejects the link.
+        assert_eq!(hyperlink("abc123", "https://example.test"), "abc123");
+    }
+
+    #[test]
+    fn measure_text_width_counts_osc8_hyperlink_payload() {
+        // console does NOT strip OSC-8 sequences, so a hyperlink inside a
+        // card body would wreck the fixed-width borders - hence the rule in
+        // `hyperlink`'s doc comment. If console ever learns to strip them,
+        // this assertion will flag that the rule can be relaxed.
+        let linked = format!("\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\", "https://x.test", "abc");
+        assert!(console::measure_text_width(&linked) > 3);
     }
 
     #[test]

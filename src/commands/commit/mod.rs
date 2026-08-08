@@ -32,28 +32,41 @@ pub async fn run(
 
     enforce_pre_commit_sync_guard(&config, dry_run).await?;
 
-    let (files, commit_input) = if amend {
+    ui::section(if amend {
+        "Amend session"
+    } else {
+        "Commit session"
+    });
+
+    let (files, commit_input, files_already_listed) = if amend {
         let files = git::last_commit_files()?;
         if files.is_empty() {
             bail!("no files in the last commit to amend");
         }
         let commit_input = amend_commit_input(&files)?;
-        (files, commit_input)
+        (files, commit_input, false)
     } else {
-        ensure_staged_files(skip_confirmation, "Commit session", true).await?;
+        let staging = ensure_staged_files(skip_confirmation, true).await?;
         let staged = git::staged_files()?;
         if staged.is_empty() {
             bail!(AicError::NoChanges);
         }
         let commit_input = staged_commit_input(&staged)?;
-        (staged, commit_input)
+        (staged, commit_input, staging.listed_files)
     };
 
     if commit_input.content.trim().is_empty() {
         bail!("no commit context available after applying ignore and binary filters");
     }
 
-    render_commit_session(&config, &files, &commit_input, amend, &context);
+    render_commit_session(
+        &config,
+        &files,
+        &commit_input,
+        amend,
+        &context,
+        files_already_listed,
+    );
 
     let mut effective_args = extra_args;
     if amend && !effective_args.iter().any(|a| a == "--amend") {
@@ -96,13 +109,8 @@ fn render_commit_session(
     commit_input: &CommitInput,
     amend: bool,
     context: &str,
+    files_already_listed: bool,
 ) {
-    ui::section(if amend {
-        "Amend session"
-    } else {
-        "Commit session"
-    });
-
     match commit_input.source {
         CommitInputSource::Diff => {
             let change_target = if amend {
@@ -134,8 +142,9 @@ fn render_commit_session(
 
     let mut context_items = Vec::new();
     if let Some(branch) = git::current_branch() {
-        context_items.push(format!("branch: {branch}"));
+        context_items.push(branch);
     }
+    context_items.push(format!("{}/{}", config.ai_provider, config.model));
     if let Some(ticket) = git::ticket_from_branch() {
         context_items.push(format!("ticket: {ticket}"));
     }
@@ -147,18 +156,16 @@ fn render_commit_session(
         context_items.push("extra context provided".to_owned());
     }
     ui::metadata_row(&context_items);
-    ui::metadata_row(&[
-        format!("provider: {}", config.ai_provider),
-        format!("model: {}", config.model),
-    ]);
-    ui::file_list(
-        if amend {
-            "Last commit changes"
-        } else {
-            "Staged changes"
-        },
-        files,
-    );
+    if !files_already_listed {
+        ui::file_list(
+            if amend {
+                "Last commit changes"
+            } else {
+                "Staged changes"
+            },
+            files,
+        );
+    }
 }
 
 pub(crate) use helpers::{apply_message_template, filtered_extra_args, staged_commit_input};

@@ -2,12 +2,17 @@ use anyhow::{Result, bail};
 
 use crate::git;
 
-use super::display::remote_display_label;
+use super::display::{commit_url_base, remote_short_label, remote_summary_label};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PushRemoteOption {
     pub(crate) name: String,
+    /// Prompt label, e.g. "[<icon> GitHub] origin".
     pub(crate) label: String,
+    /// Summary label, e.g. "origin (GitHub)".
+    pub(crate) summary: String,
+    /// Commit-page base URL on the remote's host (append "/<hash>").
+    pub(crate) commit_url_base: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +42,9 @@ pub(crate) fn build_push_plan(
         .iter()
         .map(|remote| PushRemoteOption {
             name: remote.name.clone(),
-            label: remote_display_label(remote, icon_style),
+            label: remote_short_label(remote, icon_style),
+            summary: remote_summary_label(remote),
+            commit_url_base: commit_url_base(remote),
         })
         .collect::<Vec<_>>();
 
@@ -55,7 +62,6 @@ pub(crate) fn build_push_plan(
 mod tests {
     use crate::git;
 
-    use super::super::display::remote_display_label;
     use super::*;
 
     fn remote(name: &str) -> git::GitRemoteMetadata {
@@ -80,16 +86,19 @@ mod tests {
         assert_eq!(plan, PushPlan::Skip);
     }
 
+    fn plain_option(name: &str) -> PushRemoteOption {
+        PushRemoteOption {
+            name: name.to_owned(),
+            label: name.to_owned(),
+            summary: name.to_owned(),
+            commit_url_base: None,
+        }
+    }
+
     #[test]
     fn push_plan_auto_pushes_single_remote_with_yes() {
         let plan = build_push_plan(true, true, &[remote("origin")], "auto").unwrap();
-        assert_eq!(
-            plan,
-            PushPlan::AutoPush(PushRemoteOption {
-                name: "origin".to_owned(),
-                label: "origin".to_owned(),
-            })
-        );
+        assert_eq!(plan, PushPlan::AutoPush(plain_option("origin")));
     }
 
     #[test]
@@ -98,10 +107,7 @@ mod tests {
         assert_eq!(
             plan,
             PushPlan::ConfirmSingle {
-                remote: PushRemoteOption {
-                    name: "origin".to_owned(),
-                    label: "origin".to_owned(),
-                }
+                remote: plain_option("origin")
             }
         );
     }
@@ -114,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_unknown_remote_with_url_but_no_provider_label() {
+    fn labels_unknown_remote_by_name_without_url() {
         let remote = git::GitRemoteMetadata {
             name: "mirror".to_owned(),
             fetch_url: Some("https://git.example.test/team/repo.git".to_owned()),
@@ -123,9 +129,9 @@ mod tests {
             provider: git::GitProvider::unknown(),
         };
 
-        assert_eq!(
-            remote_display_label(&remote, "auto"),
-            "mirror https://git.example.test/team/repo"
-        );
+        assert_eq!(remote_short_label(&remote, "auto"), "mirror");
+        assert_eq!(remote_summary_label(&remote), "mirror");
+        // Unknown hosts have no commit-path convention to build a link from.
+        assert_eq!(commit_url_base(&remote), None);
     }
 }

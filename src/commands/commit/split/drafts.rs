@@ -107,27 +107,23 @@ pub(crate) async fn create_split_commits(
     for (index, draft) in drafts.iter().enumerate() {
         git::clear_index()?;
         git::add_files(&draft.group.files)?;
-        let output = git::commit(&draft.message, &filtered_extra_args(config, extra_args))
-            .map_err(|error| {
-                if index == 0 {
-                    error
-                } else {
-                    anyhow::anyhow!(
-                        "split commit {} failed after {} earlier split commits were created: {error}",
-                        index + 1,
-                        index
-                    )
-                }
-            })?;
+        git::commit(&draft.message, &filtered_extra_args(config, extra_args)).map_err(|error| {
+            if index == 0 {
+                error
+            } else {
+                anyhow::anyhow!(
+                    "split commit {} failed after {} earlier split commits were created: {error}",
+                    index + 1,
+                    index
+                )
+            }
+        })?;
         ui::section(format!(
             "Split commit {}/{} created",
             index + 1,
             drafts.len()
         ));
         ui::headline(draft.message.lines().next().unwrap_or(&draft.message));
-        if !output.stderr.is_empty() {
-            ui::secondary(output.stderr);
-        }
 
         append_commit_history(config, &draft.message, &draft.group.files);
     }

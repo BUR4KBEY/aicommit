@@ -12,7 +12,10 @@ pub(crate) async fn enforce_pre_commit_sync_guard(config: &Config, dry_run: bool
         return Ok(());
     }
 
-    let snapshot = git::fetch_sync_snapshot()?;
+    let spinner = ui::spinner("Checking branch sync with remote");
+    let snapshot = git::fetch_sync_snapshot();
+    spinner.finish_and_clear();
+    let snapshot = snapshot?;
     match snapshot.state {
         GitSyncState::NoUpstream | GitSyncState::UpToDate | GitSyncState::AheadOnly => Ok(()),
         GitSyncState::BehindOnly => {
@@ -39,7 +42,6 @@ pub(crate) async fn enforce_pre_commit_sync_guard(config: &Config, dry_run: bool
 }
 
 pub(crate) async fn render_guidance(config: &Config, title: &str, request: &GitGuidanceRequest) {
-    ui::blank_line();
     ui::section(title);
     ui::metadata_row(&snapshot_metadata(&request.snapshot));
     let guidance = generate_git_guidance(config, request).await;
