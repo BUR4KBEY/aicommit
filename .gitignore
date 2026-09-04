@@ -24,6 +24,13 @@ rebase-exec.sh
 CLAUDE.md
 **/CLAUDE.md
 .claude
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
 
-# graphify knowledge-graph output and caches
-graphify-out/
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml

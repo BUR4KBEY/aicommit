@@ -151,9 +151,12 @@ Prompt templates can use these placeholders:
 {{context_instruction}}
 ```
 
-Use `.aicommitignore` in a repository to exclude files from AI diff input:
+`.aicommitignore` inherits all rules from `.gitignore` automatically. You only need to create `.aicommitignore` for *additional* exclusions on top of your existing `.gitignore`:
 
 ```ignorelang
+# .aicommitignore — extra exclusions beyond .gitignore
 path/to/large-asset.zip
 **/*.jpg
 ```
+
+If neither `.gitignore` nor `.aicommitignore` exists, no files are excluded.
