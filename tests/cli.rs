@@ -171,7 +171,7 @@ fn top_level_help_describes_all_visible_commands() {
             "models       List available models for the configured provider",
         ))
         .stdout(predicate::str::contains(
-            "hook         Manage the Git commit-msg hook",
+            "hook         Manage the Git prepare-commit-msg hook",
         ))
         .stdout(predicate::str::contains(
             "pr           Generate a pull request title and description",
@@ -293,7 +293,7 @@ fn yes_does_not_push_when_push_is_disabled() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Commit created"))
-        .stdout(predicate::str::contains("Pushed to").not());
+        .stdout(predicate::str::contains("Pushed").not());
 
     assert_eq!(
         git_stdout(remote.path(), ["rev-list", "--count", "--all"]),
@@ -319,7 +319,7 @@ fn yes_pushes_to_the_only_remote() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Commit created"))
-        .stdout(predicate::str::contains("Pushed to origin"));
+        .stdout(predicate::str::contains("→ origin"));
 
     assert_eq!(
         git_stdout(remote.path(), ["rev-list", "--count", "--all"]),
@@ -388,7 +388,7 @@ fn yes_with_push_disabled_still_commits_when_upstream_is_behind() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Commit created"))
-        .stdout(predicate::str::contains("Pushed to").not());
+        .stdout(predicate::str::contains("Pushed").not());
 
     assert_eq!(
         git_stdout(repo.path(), ["log", "--format=%s", "-1"]),
@@ -750,7 +750,8 @@ fn log_honors_codex_provider_override() {
         .arg("codex")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Rewrote 1 commit messages"));
+        .stdout(predicate::str::contains("Rewrote 1 commit message"))
+        .stdout(predicate::str::contains("Rewrote 1 commit messages").not());
 
     let output = Command::new("git")
         .args(["log", "--format=%s", "-1"])
@@ -788,7 +789,8 @@ fn log_honors_copilot_provider_override() {
         .arg("copilot")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Rewrote 1 commit messages"));
+        .stdout(predicate::str::contains("Rewrote 1 commit message"))
+        .stdout(predicate::str::contains("Rewrote 1 commit messages").not());
 
     let output = Command::new("git")
         .args(["log", "--format=%s", "-1"])
@@ -814,7 +816,7 @@ fn models_command_shows_local_provider_note_for_override() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Available models for claude-code"))
-        .stdout(predicate::str::contains("* default"))
+        .stdout(predicate::str::contains("❯ default"))
         .stdout(predicate::str::contains("installed `claude` CLI"));
 }
 
@@ -831,7 +833,7 @@ fn models_command_shows_copilot_provider_note_for_override() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Available models for copilot"))
-        .stdout(predicate::str::contains("* default"))
+        .stdout(predicate::str::contains("❯ default"))
         .stdout(predicate::str::contains("installed `copilot` CLI"));
 }
 
@@ -849,7 +851,7 @@ fn models_command_supports_anthropic_provider_override() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Available models for anthropic"))
-        .stdout(predicate::str::contains("* claude-sonnet-4-20250514"))
+        .stdout(predicate::str::contains("❯ claude-sonnet-4-20250514"))
         .stdout(predicate::str::contains("claude-opus-4-20250514"));
 }
 
@@ -867,7 +869,7 @@ fn models_command_supports_groq_provider_override() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Available models for groq"))
-        .stdout(predicate::str::contains("* llama-3.1-8b-instant"))
+        .stdout(predicate::str::contains("❯ llama-3.1-8b-instant"))
         .stdout(predicate::str::contains("llama-3.3-70b-versatile"));
 }
 
@@ -885,7 +887,7 @@ fn models_command_supports_ollama_provider_override() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Available models for ollama"))
-        .stdout(predicate::str::contains("* llama3.2"))
+        .stdout(predicate::str::contains("❯ llama3.2"))
         .stdout(predicate::str::contains("qwen3-coder"));
 }
 

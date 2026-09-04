@@ -1,7 +1,27 @@
 use crate::git;
 
-pub(crate) fn remote_display_label(remote: &git::GitRemoteMetadata, icon_style: &str) -> String {
-    remote_display_label_with_icon_style(remote, RemoteIconStyle::from_config(icon_style))
+/// Prompt label like "[<icon> GitHub] origin" - never includes the URL.
+pub(crate) fn remote_short_label(remote: &git::GitRemoteMetadata, icon_style: &str) -> String {
+    let style = RemoteIconStyle::from_config(icon_style);
+    match provider_display_label(&remote.provider, style) {
+        Some(provider) => format!("[{provider}] {}", remote.name),
+        None => remote.name.clone(),
+    }
+}
+
+/// Summary label like "origin (GitHub)"; just the name for unknown hosts.
+pub(crate) fn remote_summary_label(remote: &git::GitRemoteMetadata) -> String {
+    match remote.provider.label() {
+        Some(label) => format!("{} ({label})", remote.name),
+        None => remote.name.clone(),
+    }
+}
+
+/// Base URL for commit pages on the remote's host (append "/<hash>").
+pub(crate) fn commit_url_base(remote: &git::GitRemoteMetadata) -> Option<String> {
+    let web_url = remote.web_url.as_deref()?;
+    let commit_path = remote.provider.commit_path()?;
+    Some(format!("{web_url}/{commit_path}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,21 +40,6 @@ impl RemoteIconStyle {
             "label" | "labels" | "none" | "off" => Self::Label,
             _ => Self::Auto,
         }
-    }
-}
-
-fn remote_display_label_with_icon_style(
-    remote: &git::GitRemoteMetadata,
-    style: RemoteIconStyle,
-) -> String {
-    match (
-        provider_display_label(&remote.provider, style).as_deref(),
-        remote.web_url.as_deref(),
-    ) {
-        (Some(provider), Some(url)) => format!("[{provider}] {} {url}", remote.name),
-        (Some(provider), None) => format!("[{provider}] {}", remote.name),
-        (None, Some(url)) => format!("{} {url}", remote.name),
-        (None, None) => remote.name.clone(),
     }
 }
 

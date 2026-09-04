@@ -20,7 +20,8 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         bail!(AicError::MissingApiKey(config.ai_provider));
     }
 
-    super::commit::ensure_staged_files(false, "Review session", false).await?;
+    ui::section("Review session");
+    super::commit::ensure_staged_files(false, false).await?;
     let staged = git::staged_files()?;
     if staged.is_empty() {
         bail!(AicError::NoChanges);
@@ -31,7 +32,6 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         bail!("no diff content available after applying ignore and binary filters");
     }
 
-    ui::section("Review session");
     ui::session_step(format!(
         "Reading staged diff ({}, {} lines)",
         ui::file_count_label(staged.len()),
@@ -39,8 +39,9 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
     ));
     let mut context_items = Vec::new();
     if let Some(branch) = git::current_branch() {
-        context_items.push(format!("branch: {branch}"));
+        context_items.push(branch);
     }
+    context_items.push(format!("{}/{}", config.ai_provider, config.model));
     if let Some(ticket) = git::ticket_from_branch() {
         context_items.push(format!("ticket: {ticket}"));
     }
@@ -52,21 +53,15 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         context_items.push("extra context provided".to_owned());
     }
     ui::metadata_row(&context_items);
-    ui::metadata_row(&[
-        format!("provider: {}", config.ai_provider),
-        format!("model: {}", config.model),
-    ]);
     ui::file_list("Staged changes", &staged);
-    ui::session_step(format!(
-        "Sending to {}/{}",
-        config.ai_provider, config.model
-    ));
-    let spinner = ui::spinner("Analyzing changes");
-    let review = generate_review(&config, &diff, &context).await;
+    let spinner = ui::StatusSpinner::start("Analyzing changes", ui::StatusPool::Waiting);
+    let progress = |event: crate::generator::GenerationProgress| {
+        spinner.on_generation_progress(event, "review")
+    };
+    let review = generate_review(&config, &diff, &context, Some(&progress)).await;
     spinner.finish_and_clear();
 
     let review = review?;
-    ui::blank_line();
     ui::markdown_card("AI review", &review);
 
     let history_saved = match history_store::append_entry(&history_store::HistoryEntry {
@@ -87,21 +82,33 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
         }
     };
 
-    ui::blank_line();
     ui::section("Review complete");
     let mut completion_items = vec![format!("analyzed: {}", ui::file_count_label(staged.len()))];
     if history_saved {
         completion_items.push("history: saved".to_owned());
     }
     ui::metadata_row(&completion_items);
-    ui::secondary(
+    ui::hint(
         "Next: update the staged changes and run `aic review` again, or run `aic` when you're ready to draft a commit.",
     );
 
     Ok(())
 }
 
-async fn generate_review(config: &Config, diff: &str, context: &str) -> Result<String> {
+async fn generate_review(
+    config: &Config,
+    diff: &str,
+    context: &str,
+    progress: Option<crate::generator::ProgressFn<'_>>,
+) -> Result<String> {
+    use crate::generator::GenerationProgress;
+
+    let report = |event: GenerationProgress| {
+        if let Some(callback) = progress {
+            callback(event);
+        }
+    };
+
     let system_prompt = review_system_prompt(config, context)?;
     let system_tokens = count_messages(&[crate::ai::ChatMessage::system(&system_prompt)]);
     let max_request_tokens = config
@@ -110,16 +117,25 @@ async fn generate_review(config: &Config, diff: &str, context: &str) -> Result<S
         .saturating_sub(system_tokens)
         .saturating_sub(TOKEN_ADJUSTMENT);
 
+    report(GenerationProgress::Splitting);
     let chunks = split_diff(diff, max_request_tokens.max(1))?;
     let engine = engine_from_config(config)?;
 
     if chunks.len() == 1 {
+        report(GenerationProgress::Chunk {
+            current: 1,
+            total: 1,
+        });
         let messages = build_review_messages(config, &chunks[0], context)?;
         return engine.generate_commit_message(&messages).await;
     }
 
     let mut partial_reviews = Vec::with_capacity(chunks.len());
     for (i, chunk) in chunks.iter().enumerate() {
+        report(GenerationProgress::Chunk {
+            current: i + 1,
+            total: chunks.len(),
+        });
         let chunk_context = format!(
             "{context}\nThis is diff chunk {} of {}. List findings for this chunk only.",
             i + 1,
@@ -129,6 +145,7 @@ async fn generate_review(config: &Config, diff: &str, context: &str) -> Result<S
         partial_reviews.push(engine.generate_commit_message(&messages).await?);
     }
 
+    report(GenerationProgress::Synthesizing);
     let per_chunk_budget = max_request_tokens / partial_reviews.len().max(1);
     let synthesis_parts: Vec<String> = partial_reviews
         .iter()
@@ -136,15 +153,17 @@ async fn generate_review(config: &Config, diff: &str, context: &str) -> Result<S
         .map(|(i, review)| {
             let header = format!("--- Chunk {} ---\n", i + 1);
             let available = per_chunk_budget.saturating_sub(count_tokens(&header));
-            let lines: Vec<&str> = review.lines().collect();
             let mut truncated = String::new();
-            for line in &lines {
-                if count_tokens(&truncated) + count_tokens(line) > available {
+            let mut used_tokens = 0usize;
+            for line in review.lines() {
+                let line_tokens = count_tokens(line) + 1;
+                if used_tokens + line_tokens > available {
                     truncated.push_str("[...truncated]\n");
                     break;
                 }
                 truncated.push_str(line);
                 truncated.push('\n');
+                used_tokens += line_tokens;
             }
             format!("{header}{truncated}")
         })

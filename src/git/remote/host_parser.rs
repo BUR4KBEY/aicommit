@@ -23,6 +23,7 @@ struct GitHostProvider {
     label: String,
     nerd_font_icon: Option<String>,
     emoji_icon: Option<String>,
+    commit_path: Option<String>,
     #[serde(default)]
     hosts: Vec<String>,
     #[serde(default)]
@@ -47,6 +48,7 @@ pub(super) fn remote_url_info(url: &str) -> Option<RemoteUrlInfo> {
                 provider.label.clone(),
                 provider.nerd_font_icon.clone(),
                 provider.emoji_icon.clone(),
+                provider.commit_path.clone(),
             )
         })
         .unwrap_or_else(GitProvider::unknown);
@@ -202,11 +204,17 @@ impl GitHostRewrite {
 mod tests {
     use super::*;
 
-    fn known_provider(label: &str, nerd_font_icon: &str, emoji_icon: &str) -> GitProvider {
+    fn known_provider(
+        label: &str,
+        nerd_font_icon: &str,
+        emoji_icon: &str,
+        commit_path: Option<&str>,
+    ) -> GitProvider {
         GitProvider::known_with_icons(
             label,
             Some(nerd_font_icon.to_owned()),
             Some(emoji_icon.to_owned()),
+            commit_path.map(ToOwned::to_owned),
         )
     }
 
@@ -216,7 +224,7 @@ mod tests {
             remote_url_info("https://github.com/russmckendrick/aicommit.git"),
             Some(RemoteUrlInfo {
                 web_url: Some("https://github.com/russmckendrick/aicommit".to_owned()),
-                provider: known_provider("GitHub", "", "🐙"),
+                provider: known_provider("GitHub", "", "🐙", Some("commit")),
             })
         );
     }
@@ -227,7 +235,7 @@ mod tests {
             remote_url_info("git@bitbucket.org:workspace/project.git"),
             Some(RemoteUrlInfo {
                 web_url: Some("https://bitbucket.org/workspace/project".to_owned()),
-                provider: known_provider("Bitbucket", "", "🪣"),
+                provider: known_provider("Bitbucket", "", "🪣", Some("commits")),
             })
         );
     }
@@ -238,7 +246,7 @@ mod tests {
             remote_url_info("git@gitlab.com:group/project.git"),
             Some(RemoteUrlInfo {
                 web_url: Some("https://gitlab.com/group/project".to_owned()),
-                provider: known_provider("GitLab", "", "🦊"),
+                provider: known_provider("GitLab", "", "🦊", Some("-/commit")),
             })
         );
     }
@@ -249,7 +257,7 @@ mod tests {
             remote_url_info("https://organization@dev.azure.com/organization/project/_git/repo"),
             Some(RemoteUrlInfo {
                 web_url: Some("https://dev.azure.com/organization/project/_git/repo".to_owned()),
-                provider: known_provider("Azure DevOps", "", "☁"),
+                provider: known_provider("Azure DevOps", "", "☁", None),
             })
         );
     }
@@ -260,7 +268,7 @@ mod tests {
             remote_url_info("git@ssh.dev.azure.com:v3/organization/project/repo"),
             Some(RemoteUrlInfo {
                 web_url: Some("https://dev.azure.com/organization/project/_git/repo".to_owned()),
-                provider: known_provider("Azure DevOps", "", "☁"),
+                provider: known_provider("Azure DevOps", "", "☁", None),
             })
         );
     }
@@ -282,7 +290,7 @@ mod tests {
             remote_url_info("ssh://git@github.com:22/team/repo.git"),
             Some(RemoteUrlInfo {
                 web_url: Some("https://github.com/team/repo".to_owned()),
-                provider: known_provider("GitHub", "", "🐙"),
+                provider: known_provider("GitHub", "", "🐙", Some("commit")),
             })
         );
     }

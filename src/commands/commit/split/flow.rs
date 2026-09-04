@@ -66,9 +66,14 @@ pub(crate) async fn maybe_execute_split_flow(
         _ => bail!("invalid split selection"),
     }
 
-    let spinner = ui::spinner("Analyzing staged changes for split groups");
+    let spinner = ui::StatusSpinner::start(
+        "Analyzing staged changes for split groups",
+        ui::StatusPool::Waiting,
+    );
+    let progress =
+        |event: generator::GenerationProgress| spinner.on_generation_progress(event, "split plan");
     let suggested_groups =
-        generator::generate_split_plan(config, diff, context, staged_files).await;
+        generator::generate_split_plan(config, diff, context, staged_files, Some(&progress)).await;
     spinner.finish_and_clear();
 
     let suggested_groups = match suggested_groups {
@@ -136,17 +141,18 @@ pub(crate) async fn generate_confirm_and_commit(
     staged_files: &[String],
 ) -> Result<()> {
     loop {
-        ui::session_step(format!(
-            "Sending to {}/{}",
-            config.ai_provider, config.model
-        ));
-        let spinner = ui::spinner("Generating commit message");
+        let spinner =
+            ui::StatusSpinner::start("Generating commit message", ui::StatusPool::Waiting);
+        let progress = |event: generator::GenerationProgress| {
+            spinner.on_generation_progress(event, "commit message")
+        };
         let commit_message = generator::generate_commit_message(
             config,
             diff,
             full_gitmoji_spec,
             context,
             staged_files,
+            Some(&progress),
         )
         .await;
         spinner.finish_and_clear();
@@ -154,7 +160,6 @@ pub(crate) async fn generate_confirm_and_commit(
         let commit_message =
             super::super::apply_message_template(config, extra_args, &commit_message?);
 
-        ui::blank_line();
         ui::primary_card("Generated commit", &commit_message);
 
         if dry_run {
@@ -182,7 +187,7 @@ pub(crate) async fn generate_confirm_and_commit(
                 .await;
             }
             EDIT_OPTION => {
-                let edited = ui::text("Edit commit message", Some(&commit_message))?;
+                let edited = ui::editor("Edit commit message", &commit_message)?;
                 return super::super::push::commit_and_maybe_push(
                     config,
                     &edited,

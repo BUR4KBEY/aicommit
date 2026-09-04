@@ -40,11 +40,18 @@ enum StagingPlan {
     Abort,
 }
 
+/// What the staging preflight already rendered, so callers can avoid
+/// repeating it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StagingReport {
+    /// True when the final staged set was just listed on screen.
+    pub(crate) listed_files: bool,
+}
+
 pub async fn ensure_staged_files(
     skip_confirmation: bool,
-    session_title: &str,
     allow_unstage_preflight: bool,
-) -> Result<()> {
+) -> Result<StagingReport> {
     loop {
         let staged = git::staged_files()?;
         let changed = git::changed_files()?;
@@ -56,10 +63,10 @@ pub async fn ensure_staged_files(
                     &staged,
                     allow_unstage_preflight,
                 ) {
-                    return Ok(());
+                    return Ok(StagingReport::default());
                 }
 
-                let action = prompt_for_existing_stage_selection(session_title, &staged)?;
+                let action = prompt_for_existing_stage_selection(&staged)?;
                 let selected_files = if action == ExistingStageAction::UnstageFiles {
                     ui::multiselect("Select files to unstage", staged.clone())?
                 } else {
@@ -75,7 +82,7 @@ pub async fn ensure_staged_files(
                         ui::session_step("No files were selected; keeping the current staged set");
                         continue 'existing_preflight;
                     }
-                    StagingPlan::Continue => return Ok(()),
+                    StagingPlan::Continue => return Ok(StagingReport { listed_files: true }),
                     StagingPlan::Abort => bail!("commit aborted"),
                     StagingPlan::AddFiles(_) => bail!("invalid existing staging plan"),
                 }
@@ -83,10 +90,10 @@ pub async fn ensure_staged_files(
             StagingState::AutoStageAll => {
                 let files = build_staging_plan(StageSelectionAction::StageAll, changed, vec![])?;
                 apply_staging_plan(files)?;
-                return Ok(());
+                return Ok(StagingReport::default());
             }
             StagingState::PromptForSelection => {
-                let action = prompt_for_stage_selection(session_title, &changed)?;
+                let action = prompt_for_stage_selection(&changed)?;
                 let selected_files = if action == StageSelectionAction::ChooseFiles {
                     ui::multiselect("Select files to stage", changed.clone())?
                 } else {
@@ -94,7 +101,7 @@ pub async fn ensure_staged_files(
                 };
 
                 apply_staging_plan(build_staging_plan(action, changed, selected_files)?)?;
-                return Ok(());
+                return Ok(StagingReport::default());
             }
         }
     }
@@ -162,13 +169,9 @@ fn should_prompt_for_existing_stage_selection_with_terminals(
         && stdout_is_terminal
 }
 
-fn prompt_for_stage_selection(
-    session_title: &str,
-    changed_files: &[String],
-) -> Result<StageSelectionAction> {
-    ui::section(session_title);
+fn prompt_for_stage_selection(changed_files: &[String]) -> Result<StageSelectionAction> {
     ui::session_step("No files are staged yet");
-    ui::file_list("Changed files", changed_files);
+    ui::file_list_step("Changed files", changed_files);
 
     let selection = ui::select(
         "No files are staged. What would you like to do?",
@@ -183,13 +186,9 @@ fn prompt_for_stage_selection(
     }
 }
 
-fn prompt_for_existing_stage_selection(
-    session_title: &str,
-    staged_files: &[String],
-) -> Result<ExistingStageAction> {
-    ui::section(session_title);
+fn prompt_for_existing_stage_selection(staged_files: &[String]) -> Result<ExistingStageAction> {
     ui::session_step("These files are already staged");
-    ui::file_list("Staged changes", staged_files);
+    ui::file_list_step("Staged changes", staged_files);
 
     let selection = ui::select(
         "What would you like to do with these staged files?",

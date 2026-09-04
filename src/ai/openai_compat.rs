@@ -11,6 +11,8 @@ use crate::{
     token::count_messages,
 };
 
+const CONNECT_TIMEOUT_SECS: u64 = 10;
+
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatEngine {
     config: Config,
@@ -49,7 +51,11 @@ struct ResponseMessage {
 
 impl OpenAiCompatEngine {
     pub fn new(config: Config) -> Result<Self> {
-        let mut builder = Client::builder();
+        let mut builder =
+            Client::builder().connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS));
+        if config.http_timeout > 0 {
+            builder = builder.timeout(std::time::Duration::from_secs(config.http_timeout as u64));
+        }
         if let Some(proxy) = &config.proxy {
             builder = builder.proxy(Proxy::all(proxy)?);
         }
@@ -97,7 +103,12 @@ impl OpenAiCompatEngine {
 impl AiEngine for OpenAiCompatEngine {
     async fn generate_commit_message(&self, messages: &[ChatMessage]) -> Result<String> {
         let request_tokens = count_messages(messages);
-        if request_tokens > self.config.tokens_max_input - self.config.tokens_max_output {
+        if request_tokens
+            > self
+                .config
+                .tokens_max_input
+                .saturating_sub(self.config.tokens_max_output)
+        {
             return Err(crate::errors::AicError::TooManyTokens.into());
         }
 
@@ -129,7 +140,17 @@ impl AiEngine for OpenAiCompatEngine {
             request = request.header(key, value);
         }
 
-        let response = request.send().await.context("failed to call AI provider")?;
+        let response = request.send().await.map_err(|error| {
+            if error.is_timeout() {
+                anyhow::anyhow!(
+                    "request to {} timed out after {}s - raise AIC_HTTP_TIMEOUT or reduce the staged diff",
+                    self.config.ai_provider,
+                    self.config.http_timeout
+                )
+            } else {
+                anyhow::Error::new(error).context("failed to call AI provider")
+            }
+        })?;
         let status = response.status();
         let body = response.text().await?;
 

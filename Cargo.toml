@@ -1,6 +1,6 @@
 [package]
 name = "aicommit"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2024"
 description = "Generate AI-assisted Git commit messages"
 license = "MIT"

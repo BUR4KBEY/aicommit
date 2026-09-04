@@ -20,9 +20,11 @@ pub use write::{set_global_config, write_global_config};
 
 pub const GLOBAL_CONFIG_FILE: &str = ".aicommit";
 pub const MODEL_CACHE_FILE: &str = ".aicommit-models.json";
+pub const STATUS_MESSAGES_FILE: &str = ".aicommit-status.toml";
 pub const REPO_IGNORE_FILE: &str = ".aicommitignore";
 pub const DEFAULT_MAX_TOKENS_INPUT: usize = 128_000;
 pub const DEFAULT_MAX_TOKENS_OUTPUT: usize = 500;
+pub const DEFAULT_HTTP_TIMEOUT_SECS: usize = 120;
 
 pub const CONFIG_KEYS: &[&str] = &[
     "AIC_AI_PROVIDER",
@@ -32,6 +34,7 @@ pub const CONFIG_KEYS: &[&str] = &[
     "AIC_PROXY",
     "AIC_TOKENS_MAX_INPUT",
     "AIC_TOKENS_MAX_OUTPUT",
+    "AIC_HTTP_TIMEOUT",
     "AIC_DESCRIPTION",
     "AIC_EMOJI",
     "AIC_MODEL",
@@ -54,6 +57,7 @@ pub struct Config {
     pub proxy: Option<String>,
     pub tokens_max_input: usize,
     pub tokens_max_output: usize,
+    pub http_timeout: usize,
     pub description: bool,
     pub emoji: bool,
     pub model: String,
@@ -82,6 +86,7 @@ impl Default for Config {
             proxy: None,
             tokens_max_input: DEFAULT_MAX_TOKENS_INPUT,
             tokens_max_output: DEFAULT_MAX_TOKENS_OUTPUT,
+            http_timeout: DEFAULT_HTTP_TIMEOUT_SECS,
             description: true,
             emoji: true,
             model: default_model_for_provider("openai").to_owned(),
@@ -142,6 +147,7 @@ impl Config {
             ("AIC_PROXY", self.proxy.clone().unwrap_or_default()),
             ("AIC_TOKENS_MAX_INPUT", self.tokens_max_input.to_string()),
             ("AIC_TOKENS_MAX_OUTPUT", self.tokens_max_output.to_string()),
+            ("AIC_HTTP_TIMEOUT", self.http_timeout.to_string()),
             ("AIC_DESCRIPTION", self.description.to_string()),
             ("AIC_EMOJI", self.emoji.to_string()),
             ("AIC_MODEL", self.model.clone()),

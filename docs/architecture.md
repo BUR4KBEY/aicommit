@@ -8,6 +8,7 @@ src/cli_help.toml       Bundled help text and config-key descriptions
 src/commands/           User-facing command flows
 src/config/             Defaults, global config, loading, parsing, validation, and persistence
 src/git/                Git command wrapper, repo helpers, branch logic, remotes, and hooks
+src/ui.rs               Terminal styling layer: sections, steps, cards, spinners, prompt theme
 src/prompt/             Prompt builders, prompt-template interpolation, and response cleanup
 src/token.rs            Token counting and diff splitting
 src/generator/          Prompt, chunking, and AI engine orchestration
@@ -43,6 +44,8 @@ Current provider families:
 - Command-backed engines for `claude-code`, `codex`, and `copilot`
 
 Git behavior is isolated behind the `src/git/` module family so commit, push, hooks, staged-file discovery, branch/base-ref logic, and ignore-file filtering are testable without mixing Git process logic into UI commands.
+
+All terminal output goes through `src/ui.rs`, the single styling layer: `◇` section headers, dim `•` session steps, bordered cards, status spinners, and the inquire prompt theme. Sections and cards insert their own leading blank line via an internal last-line tracker, so command flows never manage vertical spacing; the one rule is to `finish_and_clear` any live spinner before printing. `ui::hyperlink` wraps text in an OSC-8 terminal hyperlink with a plain-text fallback (and must never be used inside card bodies, whose fixed-width borders measure visible text).
 
 The largest command and support modules are now folderized to keep responsibilities local without changing public module paths:
 

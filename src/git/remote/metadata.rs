@@ -15,6 +15,7 @@ pub struct GitProvider {
     label: Option<String>,
     nerd_font_icon: Option<String>,
     emoji_icon: Option<String>,
+    commit_path: Option<String>,
 }
 
 impl GitProvider {
@@ -23,6 +24,7 @@ impl GitProvider {
             label: Some(label.into()),
             nerd_font_icon: None,
             emoji_icon: None,
+            commit_path: None,
         }
     }
 
@@ -30,11 +32,13 @@ impl GitProvider {
         label: impl Into<String>,
         nerd_font_icon: Option<String>,
         emoji_icon: Option<String>,
+        commit_path: Option<String>,
     ) -> Self {
         Self {
             label: Some(label.into()),
             nerd_font_icon,
             emoji_icon,
+            commit_path,
         }
     }
 
@@ -43,6 +47,7 @@ impl GitProvider {
             label: None,
             nerd_font_icon: None,
             emoji_icon: None,
+            commit_path: None,
         }
     }
 
@@ -56,6 +61,10 @@ impl GitProvider {
 
     pub fn emoji_icon(&self) -> Option<&str> {
         self.emoji_icon.as_deref()
+    }
+
+    pub fn commit_path(&self) -> Option<&str> {
+        self.commit_path.as_deref()
     }
 }
 

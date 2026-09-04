@@ -65,9 +65,9 @@ about = "List available models for the configured provider"
 help = "Refresh the cached remote model list"
 
 [root.commands.hook]
-about = "Manage the Git commit-msg hook"
+about = "Manage the Git prepare-commit-msg hook"
 long_about = """
-Install or remove the aic commit-msg hook for the current repository.
+Install or remove the aic prepare-commit-msg hook for the current repository.
 
 Examples:
   aic hook set
@@ -75,10 +75,10 @@ Examples:
 """
 
 [root.commands.hook.commands.set]
-about = "Install the commit-msg hook in the current repository"
+about = "Install the prepare-commit-msg hook in the current repository"
 
 [root.commands.hook.commands.unset]
-about = "Remove the aic-managed commit-msg hook"
+about = "Remove the aic-managed prepare-commit-msg hook"
 
 [root.commands.hook.commands.hookrun.args.message_file]
 help = "Path to the commit message file provided by Git"
@@ -249,6 +249,7 @@ AIC_API_CUSTOM_HEADERS = "JSON object of custom HTTP headers"
 AIC_PROXY = "HTTP or HTTPS proxy URL"
 AIC_TOKENS_MAX_INPUT = "Maximum input token budget"
 AIC_TOKENS_MAX_OUTPUT = "Maximum generated output tokens"
+AIC_HTTP_TIMEOUT = "HTTP request timeout in seconds for API providers (0 disables)"
 AIC_DESCRIPTION = "Include a short body after the subject"
 AIC_EMOJI = "Prefix generated messages with GitMoji"
 AIC_MODEL = "AI model to use"

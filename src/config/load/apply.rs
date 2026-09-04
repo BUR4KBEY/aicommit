@@ -61,6 +61,7 @@ pub fn apply_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "AIC_TOKENS_MAX_OUTPUT" => {
             config.tokens_max_output = crate::config::parse::parse_usize(key, value)?
         }
+        "AIC_HTTP_TIMEOUT" => config.http_timeout = crate::config::parse::parse_usize(key, value)?,
         "AIC_DESCRIPTION" => config.description = crate::config::parse::parse_bool(key, value)?,
         "AIC_EMOJI" => config.emoji = crate::config::parse::parse_bool(key, value)?,
         "AIC_MODEL" => config.model = value.to_owned(),

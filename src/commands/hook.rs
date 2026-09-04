@@ -48,9 +48,21 @@ pub async fn run_hook(message_file: String, commit_source: Option<String>) -> Re
         return Ok(());
     }
 
-    let message =
-        generator::generate_commit_message(&config, &commit_input.content, false, "", &staged)
-            .await?;
+    // git invokes this from prepare-commit-msg with no UI of its own; a plain
+    // stderr line keeps hook users informed without assuming a TTY.
+    eprintln!(
+        "aic: generating commit message via {}/{} ...",
+        config.ai_provider, config.model
+    );
+    let message = generator::generate_commit_message(
+        &config,
+        &commit_input.content,
+        false,
+        "",
+        &staged,
+        None,
+    )
+    .await?;
     let existing = fs::read_to_string(&message_file)?;
     let content = if config.hook_auto_uncomment {
         format!("{message}\n\n{existing}")

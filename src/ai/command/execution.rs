@@ -1,7 +1,7 @@
 use std::{
     io::Write,
     path::PathBuf,
-    process::{Command, Stdio},
+    process::{Command, Output, Stdio},
 };
 
 use anyhow::{Context, Result, bail};
@@ -48,6 +48,49 @@ impl CommandEngine {
     }
 }
 
+enum CommandIoError {
+    Spawn(std::io::Error),
+    Prompt(std::io::Error),
+    Output(std::io::Error),
+}
+
+fn run_command(
+    program: PathBuf,
+    args: Vec<String>,
+    cwd: PathBuf,
+    prompt: String,
+) -> Result<Output, CommandIoError> {
+    let mut child = Command::new(&program)
+        .args(&args)
+        .current_dir(&cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(CommandIoError::Spawn)?;
+
+    // Feed stdin from its own thread while wait_with_output drains stdout and
+    // stderr; writing inline deadlocks once prompt and output exceed the pipe
+    // buffers (~64KiB), which large diffs always do.
+    let writer = child.stdin.take().map(|mut stdin| {
+        std::thread::spawn(move || -> std::io::Result<()> { stdin.write_all(prompt.as_bytes()) })
+    });
+
+    let output = child.wait_with_output().map_err(CommandIoError::Output)?;
+
+    if let Some(writer) = writer {
+        // A child that exits before reading all of stdin breaks the pipe; its
+        // own output/exit status carries the real story in that case.
+        if let Ok(Err(error)) = writer.join()
+            && error.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            return Err(CommandIoError::Prompt(error));
+        }
+    }
+
+    Ok(output)
+}
+
 #[async_trait]
 impl AiEngine for CommandEngine {
     async fn generate_commit_message(&self, messages: &[ChatMessage]) -> Result<String> {
@@ -55,14 +98,15 @@ impl AiEngine for CommandEngine {
         let program = self
             .resolved_program()
             .unwrap_or_else(|| PathBuf::from(&self.program));
-        let mut child = Command::new(&program)
-            .args(&self.args)
-            .current_dir(&self.cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| match error.kind() {
+        let args = self.args.clone();
+        let cwd = self.cwd.clone();
+
+        let result = tokio::task::spawn_blocking(move || run_command(program, args, cwd, prompt))
+            .await
+            .context("provider subprocess task failed")?;
+
+        let output = result.map_err(|error| match error {
+            CommandIoError::Spawn(error) => match error.kind() {
                 std::io::ErrorKind::NotFound => anyhow::anyhow!(
                     "{} provider requires `{}` on PATH",
                     self.provider_label(),
@@ -73,20 +117,16 @@ impl AiEngine for CommandEngine {
                     self.provider_label(),
                     self.binary_hint()
                 ),
-            })?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(prompt.as_bytes())
-                .with_context(|| format!("failed to write prompt to `{}`", self.binary_hint()))?;
-        }
-
-        let output = child.wait_with_output().with_context(|| {
-            format!(
-                "failed to read output from {} provider via `{}`",
+            },
+            CommandIoError::Prompt(error) => anyhow::anyhow!(
+                "failed to write prompt to `{}`: {error}",
+                self.binary_hint()
+            ),
+            CommandIoError::Output(error) => anyhow::anyhow!(
+                "failed to read output from {} provider via `{}`: {error}",
                 self.provider_label(),
                 self.binary_hint()
-            )
+            ),
         })?;
 
         if !output.status.success() {
@@ -265,6 +305,47 @@ mod tests {
             .unwrap();
 
         assert_eq!(response, "feat: add cli");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_engine_survives_large_prompt_and_chatty_child() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Regression test for the stdin/stdout pipe deadlock: the child floods
+        // stderr well past the pipe buffer before reading any of stdin, and the
+        // prompt itself is far larger than the stdin pipe buffer.
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("chatty");
+        let script = "#!/bin/sh\n\
+            i=0\n\
+            while [ $i -lt 3000 ]; do\n\
+            \techo \"stderr noise long enough to overflow the pipe buffer before stdin is read\" >&2\n\
+            \ti=$((i+1))\n\
+            done\n\
+            cat >/dev/null\n\
+            echo \"feat: survive large prompts\"\n";
+        std::fs::write(&path, script).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+
+        let engine = CommandEngine::with_command(
+            Config {
+                ai_provider: "claude-code".to_owned(),
+                model: "default".to_owned(),
+                ..Config::default()
+            },
+            "/bin/sh".to_owned(),
+            vec![path.to_string_lossy().to_string()],
+            std::env::temp_dir(),
+        );
+
+        let large_diff = "+ a reasonably long changed line of diff content\n".repeat(10_000);
+        let messages = vec![ChatMessage::user(large_diff)];
+
+        let response = engine.generate_commit_message(&messages).await.unwrap();
+        assert_eq!(response, "feat: survive large prompts");
     }
 
     #[tokio::test]

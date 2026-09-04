@@ -14,7 +14,8 @@ This folder is the detailed documentation entry point for `aic`, the Rust CLI fo
 - [Testing](testing.md): run the verification suite.
 - [Roadmap](roadmap.md): see deferred v1 items.
 - [Release Notes - Unreleased](releases/unreleased.md): upcoming changes not yet shipped in a tagged release.
-- [Release Notes - 0.0.8](releases/0.0.8.md): latest release notes.
+- [Release Notes - 0.0.9](releases/0.0.9.md): latest release notes.
+- [Release Notes - 0.0.8](releases/0.0.8.md): previous release notes.
 - [Release Notes - 0.0.7](releases/0.0.7.md): previous release notes.
 - [Release Notes - 0.0.6](releases/0.0.6.md): previous release notes.
 - [Release Notes - 0.0.5](releases/0.0.5.md): previous release notes.

@@ -13,6 +13,8 @@ use crate::{
     token::{count_messages, split_diff},
 };
 
+use super::{GenerationProgress, ProgressFn, report};
+
 const TOKEN_ADJUSTMENT: usize = 20;
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +34,7 @@ pub async fn generate_split_plan(
     diff: &str,
     context: &str,
     staged_files: &[String],
+    progress: Option<ProgressFn<'_>>,
 ) -> Result<Vec<SplitPlanGroup>> {
     let prompt_tokens = count_messages(&build_split_plan_messages(
         config,
@@ -45,10 +48,18 @@ pub async fn generate_split_plan(
         .saturating_sub(prompt_tokens)
         .saturating_sub(TOKEN_ADJUSTMENT);
 
+    report(progress, GenerationProgress::Splitting);
     let chunks = split_diff(diff, max_request_tokens.max(1))?;
     let engine = engine_from_config(config)?;
 
     if chunks.len() == 1 {
+        report(
+            progress,
+            GenerationProgress::Chunk {
+                current: 1,
+                total: 1,
+            },
+        );
         let messages = build_split_plan_messages(config, &chunks[0], context, staged_files)?;
         let response = engine.generate_commit_message(&messages).await?;
         return parse_split_plan_response(&response, staged_files);
@@ -56,6 +67,13 @@ pub async fn generate_split_plan(
 
     let mut partial_summaries = Vec::with_capacity(chunks.len());
     for (index, chunk) in chunks.iter().enumerate() {
+        report(
+            progress,
+            GenerationProgress::Chunk {
+                current: index + 1,
+                total: chunks.len(),
+            },
+        );
         let messages = build_split_chunk_summary_messages(
             config,
             chunk,
@@ -67,6 +85,7 @@ pub async fn generate_split_plan(
         partial_summaries.push(engine.generate_commit_message(&messages).await?);
     }
 
+    report(progress, GenerationProgress::Synthesizing);
     let synthesis_messages =
         build_split_synthesis_messages(config, &partial_summaries, context, staged_files)?;
     let response = engine.generate_commit_message(&synthesis_messages).await?;
