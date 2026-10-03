@@ -1,12 +1,1 @@
 # aicommit Unreleased
-
-## Apple Foundation Models Provider
-
-- New experimental `apple` provider (alias `fm`) generates commit messages, reviews, and PR drafts with Apple's on-device Foundation Model via the `fm respond` CLI that ships with macOS. No API key is needed and nothing leaves the machine; Apple Intelligence must be enabled.
-- The system prompt and few-shot example go through `fm`'s `-i` instructions flag, with only the diff over stdin, which keeps the small model on the expected commit format.
-- `AIC_TOKENS_MAX_INPUT` is capped at `6000` for this provider to fit the model's 8,192-token context window, so larger diffs are chunked automatically. Context overflows are reported with a hint to lower the limit.
-
-## Dependency Updates
-
-- Rust toolchain verified on 1.99.0, and all dependencies updated to their latest releases, including `reqwest` 0.13, `tiktoken-rs` 0.12, `toml_edit` 0.25, and `termimad` 0.35.
-- HTTPS certificate checks now go through `reqwest` 0.13's platform verifier (`rustls-platform-verifier` on `aws-lc-rs`), which asks the OS trust store directly. Corporate and custom CA roots keep working, and on macOS and Windows the OS's own trust policy now applies too.
