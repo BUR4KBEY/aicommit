@@ -125,6 +125,12 @@ The `apple` provider needs a Mac with Apple Intelligence enabled and the `fm` CL
 
 The on-device model has an 8,192-token context window, so `aic` caps `AIC_TOKENS_MAX_INPUT` at `6000` for this provider (a lower configured value is kept). Larger diffs are split into chunks and synthesized as usual, which works but takes longer, and summaries of big multi-chunk diffs are noticeably less accurate than hosted models. It is best suited to small, focused commits. If the model still runs out of context, `aic` says so and suggests lowering `AIC_TOKENS_MAX_INPUT`.
 
+Because the on-device model is small, commit generation with `apple` adjusts the prompt and output:
+
+- It uses the compact `prompts/commit-system-apple.md` template, which leaves out the default style examples (the model tends to copy them) and tells the model not to restate the contents of added files as changes.
+- The diff starts with a staged-file outline (added or modified, with line counts), and added prose files (`.md`, `.mdx`, `.txt` and similar) longer than 40 lines are trimmed to their first 20 lines, so a new blog post or README doesn't drown out the rest of the change.
+- The generated message is tidied: stray code fences, Markdown bold, and trailing spaces are removed, a blank line is enforced between subject and body, and a GitMoji that contradicts the commit type (such as `✨ docs:`) is corrected when the short GitMoji convention is in use.
+
 For local CLI providers, `AIC_MODEL=default` means "use the CLI's own default model". `aic` does not pass a model flag through in v1.
 
 Use `--provider` to override the configured provider for a single run:

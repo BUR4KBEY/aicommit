@@ -134,7 +134,7 @@ When `AIC_GITPUSH=true`, `aic` now fetches the tracked upstream before starting 
 
 ## Prompt Template
 
-The default system prompt template lives at `prompts/commit-system.md`.
+The default system prompt template lives at `prompts/commit-system.md`. The `apple` provider uses the shorter `prompts/commit-system-apple.md` instead, which supports the same placeholders except `{{style_examples}}`. `AIC_PROMPT_FILE` overrides both.
 
 Use a custom prompt template without recompiling:
 

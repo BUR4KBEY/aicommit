@@ -64,6 +64,7 @@ As a maintenance rule, modules that start combining multiple distinct concerns s
 Prompt templates live in `prompts/`:
 
 - `commit-system.md` - system prompt for commit message generation. Supports scope hints derived from staged file paths.
+- `commit-system-apple.md` - compact commit prompt for the `apple` provider's small on-device model. It has no style examples (the model copies them) and tells the model not to restate the contents of added files as changes.
 - `split-system.md` - system prompt for grouping one staged change set into multiple file-based commits.
 - `review-system.md` - system prompt for `aic review` diff analysis.
 

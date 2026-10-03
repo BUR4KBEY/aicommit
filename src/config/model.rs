@@ -13,7 +13,7 @@ const LOCAL_CLI_PROVIDERS: &[&str] = &["claude-code", "codex", "copilot", "apple
 
 // Apple's on-device Foundation Model has an 8,192-token context window that
 // covers instructions, prompt, and response. aic counts with cl100k, which
-// runs ~10-20% under Apple's tokenizer on diffs, so leave generous headroom.
+// runs ~20-25% under Apple's tokenizer on code and diffs, so leave headroom.
 const APPLE_MAX_TOKENS_INPUT: usize = 6_000;
 
 pub fn default_model_for_provider(provider: &str) -> &'static str {
@@ -75,6 +75,12 @@ pub fn provider_max_tokens_input(provider: &str) -> Option<usize> {
         "apple" => Some(APPLE_MAX_TOKENS_INPUT),
         _ => None,
     }
+}
+
+/// Providers backed by a small model that needs a compact prompt, a trimmed
+/// diff, and post-generation cleanup to produce a usable commit message.
+pub fn provider_uses_compact_prompts(provider: &str) -> bool {
+    provider == "apple"
 }
 
 pub fn provider_needs_api_key(provider: &str) -> bool {
