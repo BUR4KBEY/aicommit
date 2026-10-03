@@ -533,6 +533,10 @@ fn provider_override_uses_copilot_binary() {
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("feat(cli): use copilot override"));
 }
 
+// `fm` only ships on macOS, and the Windows fake binary is a .cmd script:
+// Rust refuses to pass the multi-line `-i` instructions argument to batch
+// files (CVE-2024-24576 mitigation), so this flow can't be exercised there.
+#[cfg(unix)]
 #[test]
 fn provider_override_uses_apple_fm_binary() {
     let repo = init_repo();
