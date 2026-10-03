@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use super::{
     Config, ConfigPaths,
-    model::{default_model_for_provider, is_local_cli_provider},
+    model::{default_model_for_provider, is_local_cli_provider, provider_max_tokens_input},
     validate::validate_config,
 };
 
@@ -29,6 +29,10 @@ pub fn load_from_with_provider_override(
         {
             config.model = default_model_for_provider(&config.ai_provider).to_owned();
         }
+    }
+
+    if let Some(limit) = provider_max_tokens_input(&config.ai_provider) {
+        config.tokens_max_input = config.tokens_max_input.min(limit);
     }
 
     if config.proxy.is_none() {
@@ -243,5 +247,35 @@ mod tests {
 
         assert_eq!(config.ai_provider, "claude-code");
         assert_eq!(config.model, "default");
+    }
+
+    #[test]
+    fn apple_provider_caps_token_input_and_accepts_fm_alias() {
+        let temp = TempDir::new().unwrap();
+        let global = temp.path().join(".aicommit");
+        std::fs::write(&global, "AIC_AI_PROVIDER = \"fm\"\n").unwrap();
+
+        let config = Config::load_from(&ConfigPaths { global }).unwrap();
+
+        assert_eq!(config.ai_provider, "apple");
+        assert_eq!(config.tokens_max_input, 6_000);
+    }
+
+    #[test]
+    fn apple_provider_override_keeps_lower_explicit_token_input() {
+        let temp = TempDir::new().unwrap();
+        let global = temp.path().join(".aicommit");
+        std::fs::write(
+            &global,
+            "AIC_AI_PROVIDER = \"openai\"\nAIC_TOKENS_MAX_INPUT = 4000\n",
+        )
+        .unwrap();
+
+        let config =
+            Config::load_from_with_provider_override(&ConfigPaths { global }, Some("apple"))
+                .unwrap();
+
+        assert_eq!(config.ai_provider, "apple");
+        assert_eq!(config.tokens_max_input, 4_000);
     }
 }

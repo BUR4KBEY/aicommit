@@ -24,6 +24,10 @@ struct ModelCache {
     models: BTreeMap<String, Vec<String>>,
 }
 
+fn cli_auth_note(binary: &str) -> String {
+    format!("Uses the installed {binary} CLI from PATH with its existing authentication.")
+}
+
 pub async fn run(provider_override: Option<String>, refresh: bool) -> Result<()> {
     let config = Config::load_with_provider_override(provider_override.as_deref())?;
     let provider = config.ai_provider.clone();
@@ -37,15 +41,17 @@ pub async fn run(provider_override: Option<String>, refresh: bool) -> Result<()>
     if is_local_cli_provider(&provider) {
         ui::section(format!("Available models for {provider}"));
         ui::info(format!("❯ {}", config.model));
-        let binary = match provider.as_str() {
-            "claude-code" => "`claude`",
-            "codex" => "`codex exec`",
-            "copilot" => "`copilot`",
-            _ => "`local CLI`",
+        let note = match provider.as_str() {
+            "claude-code" => cli_auth_note("`claude`"),
+            "codex" => cli_auth_note("`codex exec`"),
+            "copilot" => cli_auth_note("`copilot`"),
+            "apple" => format!(
+                "Uses the on-device Apple Foundation Model via the installed `fm respond` CLI from PATH; input is capped at {} tokens.",
+                config.tokens_max_input
+            ),
+            _ => cli_auth_note("`local CLI`"),
         };
-        ui::secondary(format!(
-            "Uses the installed {binary} CLI from PATH with its existing authentication."
-        ));
+        ui::secondary(note);
         return Ok(());
     }
 

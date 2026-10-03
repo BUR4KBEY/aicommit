@@ -9,6 +9,14 @@ mod path;
 
 pub use execution::CommandEngine;
 
+const APPLE_RESPOND_ARGS: &[&str] = &[
+    "respond",
+    "--no-stream",
+    "--greedy",
+    "--guardrails",
+    "permissive-content-transformations",
+];
+
 const COPILOT_EXCLUDED_TOOLS: &str = "bash,read_bash,write_bash,stop_bash,list_bash,create,edit,apply_patch,web_fetch,task,read_agent,list_agents,ask_user";
 
 impl CommandEngine {
@@ -28,6 +36,8 @@ impl CommandEngine {
                 ],
                 cwd,
             )),
+            "apple" => Ok(Self::with_command(config, "fm", APPLE_RESPOND_ARGS, cwd)
+                .with_instructions_flag("-i")),
             unsupported => bail!("provider '{unsupported}' is not supported by the command engine"),
         }
     }
@@ -46,7 +56,16 @@ impl CommandEngine {
                 .map(|arg| arg.as_ref().to_owned())
                 .collect(),
             cwd,
+            instructions_flag: None,
         }
+    }
+
+    /// Pass system prompts and earlier turns through `flag` instead of stdin,
+    /// leaving only the final user message on stdin. Suits CLIs that take
+    /// separate instructions and are too small to untangle a flattened transcript.
+    pub(crate) fn with_instructions_flag(mut self, flag: impl Into<String>) -> Self {
+        self.instructions_flag = Some(flag.into());
+        self
     }
 
     fn provider_label(&self) -> &'static str {
@@ -54,6 +73,7 @@ impl CommandEngine {
             "claude-code" => "claude-code",
             "codex" => "codex",
             "copilot" => "copilot",
+            "apple" => "apple",
             _ => "command provider",
         }
     }
@@ -90,5 +110,19 @@ mod tests {
                 COPILOT_EXCLUDED_TOOLS.to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn apple_provider_uses_fm_respond_with_instructions_flag() {
+        let engine = CommandEngine::new(Config {
+            ai_provider: "apple".to_owned(),
+            model: "default".to_owned(),
+            ..Config::default()
+        })
+        .unwrap();
+
+        assert_eq!(engine.program, "fm");
+        assert_eq!(engine.args, APPLE_RESPOND_ARGS);
+        assert_eq!(engine.instructions_flag.as_deref(), Some("-i"));
     }
 }

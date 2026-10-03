@@ -534,6 +534,39 @@ fn provider_override_uses_copilot_binary() {
 }
 
 #[test]
+fn provider_override_uses_apple_fm_binary() {
+    let repo = init_repo();
+    let bin_dir = TempDir::new().unwrap();
+    install_fake_binary(
+        bin_dir.path(),
+        "fm",
+        "feat(cli): use apple override\n\n- route commit generation through the on-device model",
+    );
+
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let mut cmd = Command::cargo_bin("aic").unwrap();
+    cmd.current_dir(repo.path())
+        .env("AIC_AI_PROVIDER", "openai")
+        .env("AIC_GITPUSH", "false")
+        .env("PATH", path_with_fake_bin(bin_dir.path()))
+        .arg("--provider")
+        .arg("apple")
+        .arg("--yes")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Commit created"));
+
+    let output = Command::new("git")
+        .args(["log", "--format=%B", "-1"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("feat(cli): use apple override"));
+}
+
+#[test]
 fn review_honors_codex_provider_override() {
     let repo = init_repo();
     let bin_dir = TempDir::new().unwrap();
@@ -1158,4 +1191,22 @@ fn history_invalid_timestamp_falls_back_to_raw_value() {
         .assert()
         .success()
         .stdout(predicate::str::contains("yesterday-ish"));
+}
+
+#[test]
+fn models_command_shows_apple_provider_note_for_override() {
+    let repo = init_repo();
+
+    let mut cmd = Command::cargo_bin("aic").unwrap();
+    cmd.current_dir(repo.path())
+        .env("AIC_AI_PROVIDER", "openai")
+        .arg("models")
+        .arg("--provider")
+        .arg("apple")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Available models for apple"))
+        .stdout(predicate::str::contains("❯ default"))
+        .stdout(predicate::str::contains("`fm respond`"))
+        .stdout(predicate::str::contains("capped at 6000 tokens"));
 }

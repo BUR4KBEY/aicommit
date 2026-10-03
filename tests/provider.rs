@@ -104,12 +104,19 @@ fn engine_from_config_accepts_supported_providers() {
         ..Config::default()
     };
 
+    let apple = Config {
+        ai_provider: "apple".to_owned(),
+        model: "default".to_owned(),
+        ..Config::default()
+    };
+
     assert!(engine_from_config(&anthropic).is_ok());
     assert!(engine_from_config(&groq).is_ok());
     assert!(engine_from_config(&ollama).is_ok());
     assert!(engine_from_config(&claude).is_ok());
     assert!(engine_from_config(&codex).is_ok());
     assert!(engine_from_config(&copilot).is_ok());
+    assert!(engine_from_config(&apple).is_ok());
 }
 
 #[tokio::test]

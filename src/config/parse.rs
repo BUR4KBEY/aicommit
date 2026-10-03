@@ -21,6 +21,7 @@ pub fn normalize_provider(value: &str) -> String {
     match value.trim().to_lowercase().as_str() {
         "azure" => "azure-openai".to_owned(),
         "claudecode" => "claude-code".to_owned(),
+        "fm" => "apple".to_owned(),
         provider => provider.to_owned(),
     }
 }

@@ -13,7 +13,8 @@ mod write;
 pub use load::{apply_file, apply_process_env, apply_toml_item, apply_value, optional_string};
 pub use model::{
     default_api_url_for_provider, default_model_for_provider, enabled_providers,
-    is_local_cli_provider, model_list, provider_needs_api_key, supported_providers,
+    is_local_cli_provider, model_list, provider_max_tokens_input, provider_needs_api_key,
+    supported_providers,
 };
 pub use validate::validate_config;
 pub use write::{set_global_config, write_global_config};

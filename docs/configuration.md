@@ -68,9 +68,9 @@ AIC_REMOTE_ICON_STYLE
 AIC_HOOK_AUTO_UNCOMMENT
 ```
 
-`AIC_TOKENS_MAX_INPUT` defaults to `128000` for new configs.
+`AIC_TOKENS_MAX_INPUT` defaults to `128000` for new configs. The `apple` provider caps it at `6000` at load time to fit the on-device model's context window; the cap is not written back to your config file.
 
-`AIC_HTTP_TIMEOUT` caps each API request to the HTTP providers (`openai`, `azure-openai`, `anthropic`, `groq`, `ollama`) in seconds. It defaults to `120`; set it to `0` to disable the timeout entirely, or raise it if a slow local model (for example Ollama on a large prompt) needs more time. Local CLI providers (`claude-code`, `codex`, `copilot`) are not affected.
+`AIC_HTTP_TIMEOUT` caps each API request to the HTTP providers (`openai`, `azure-openai`, `anthropic`, `groq`, `ollama`) in seconds. It defaults to `120`; set it to `0` to disable the timeout entirely, or raise it if a slow local model (for example Ollama on a large prompt) needs more time. Local CLI providers (`claude-code`, `codex`, `copilot`, `apple`) are not affected.
 
 ## Large diffs
 
@@ -108,6 +108,8 @@ For Ollama, set `AIC_AI_PROVIDER=ollama` and optionally override the default `ll
 
 For local CLI providers, set `AIC_AI_PROVIDER=claude-code`, `AIC_AI_PROVIDER=codex`, or `AIC_AI_PROVIDER=copilot` and leave `AIC_MODEL=default`. These providers use the installed `claude`, `codex`, or `copilot` binary from `PATH` and rely on that CLI's existing login state instead of `AIC_API_KEY`.
 
+For Apple's on-device model, set `AIC_AI_PROVIDER=apple` and leave `AIC_MODEL=default`. It uses the `fm` CLI that ships with macOS and needs Apple Intelligence enabled, but no API key. See [Providers](providers.md) for its context limit.
+
 Use `--provider <name>` to override the configured provider for a single run:
 
 ```sh
@@ -117,11 +119,12 @@ aic --provider ollama
 aic --provider claude-code
 aic review --provider codex
 aic review --provider copilot
+aic --provider apple
 aic log --provider codex --yes
 aic models --provider ollama
 ```
 
-The alias `claudecode` is accepted and normalized to `claude-code`.
+The alias `claudecode` is accepted and normalized to `claude-code`, and `fm` is normalized to `apple`.
 
 `AIC_GITPUSH` controls whether `aic` offers a push step after committing. In the normal interactive flow, the single-remote prompt now defaults to `Yes`. With `aic --yes`, `aic` pushes automatically when exactly one remote is configured.
 

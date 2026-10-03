@@ -426,7 +426,8 @@ pub fn init_prompt_theme() {
 
 /// Wrap `text` in an OSC-8 terminal hyperlink when stdout is an interactive,
 /// color-capable terminal; plain text otherwise. Never use inside card bodies:
-/// the escape sequence would break their fixed-width borders.
+/// card wrapping can split a multi-word link across lines, leaving the escape
+/// sequence open across the fixed-width borders.
 pub fn hyperlink(text: &str, url: &str) -> String {
     if console::colors_enabled() && Term::stdout().is_term() {
         format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
@@ -698,13 +699,14 @@ mod tests {
     }
 
     #[test]
-    fn measure_text_width_counts_osc8_hyperlink_payload() {
-        // console does NOT strip OSC-8 sequences, so a hyperlink inside a
-        // card body would wreck the fixed-width borders - hence the rule in
-        // `hyperlink`'s doc comment. If console ever learns to strip them,
-        // this assertion will flag that the rule can be relaxed.
+    fn card_measurement_ignores_osc8_hyperlink_payload() {
+        // Since console 0.16.6 both console and textwrap measure an OSC-8
+        // hyperlink by its visible text, so a link no longer skews card
+        // padding. The card rule in `hyperlink`'s doc comment still stands
+        // because wrapping can split a multi-word link across lines.
         let linked = format!("\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\", "https://x.test", "abc");
-        assert!(console::measure_text_width(&linked) > 3);
+        assert_eq!(console::measure_text_width(&linked), 3);
+        assert_eq!(textwrap::core::display_width(&linked), 3);
     }
 
     #[test]
