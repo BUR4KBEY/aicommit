@@ -86,9 +86,32 @@ aic
 Limitations in v1:
 
 - splitting is file-based, not hunk-based
-- split flow is only offered in the normal interactive `aic` path
+- the interactive picker is only offered in the normal interactive `aic` path
 - split flow is skipped when a staged file also has unstaged changes
-- `--yes`, `--dry-run`, and `--amend` stay single-commit
+- `--dry-run` and `--amend` stay single-commit in the interactive path
+
+## Non-Interactive Split (`--split auto`)
+
+For scripts and AI agents, `--split auto` runs the full split pipeline
+without prompts: request a split plan, generate one message per group, and
+create the commits in plan order.
+
+```sh
+aic -y --split auto       # one commit per group, no prompts
+aic -d --split auto       # print the plan without committing
+aic -y --split auto --json  # commits + "split_plan": [...] in the envelope
+```
+
+Guardrails (all silent fallbacks to a single commit, with a stderr warning):
+
+- fewer than 2 usable groups proposed, or the plan request fails
+- more groups than `AIC_SPLIT_MAX` (default `10`)
+- any staged file also has unstaged changes
+- single-file staged sets, `--amend`, and binary/metadata-only inputs
+
+`--split auto` requires `-y` (or `-d` for dry-run) and never prompts, so it
+is safe to run on arbitrary repos. `--split off` (the default) keeps
+today's behavior everywhere, including under `-y` alone.
 
 ## Command Help
 
@@ -129,7 +152,7 @@ Notes:
 - `--json` requires `-y` for real commits (dry-run excepted); `--quiet` implies `-y`.
 - `--json` and `--quiet` are mutually exclusive.
 - On failure under `--json`, stdout holds one JSON `error` object (`code`, `message`, `retryable`, `attempts`) and the exit code follows the [taxonomy](#exit-codes); diagnostics go to stderr.
-- `--json` / `--quiet` commit runs are single-commit; the interactive split flow is not offered.
+- `--json` / `--quiet` commit runs are single-commit unless `--split auto` is passed (then `commits` holds one entry per group and `split_plan` mirrors the plan); the interactive split flow is never offered.
 - `review` in machine mode requires staged files (no staging menu).
 - Null/absent optional fields (`message`, `commits`, `split_plan`, `error`) may be omitted; consumers must tolerate additions.
 

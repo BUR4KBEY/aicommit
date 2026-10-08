@@ -81,6 +81,7 @@ pub fn apply_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "AIC_HOOK_AUTO_UNCOMMENT" => {
             config.hook_auto_uncomment = crate::config::parse::parse_bool(key, value)?
         }
+        "AIC_SPLIT_MAX" => config.split_max = crate::config::parse::parse_usize(key, value)?,
         _ => unreachable!("all config keys are handled"),
     }
     Ok(())

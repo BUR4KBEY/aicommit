@@ -4,6 +4,16 @@ use clap_complete::Shell;
 
 use crate::{commands, output::OutputMode};
 
+/// Non-interactive split-commit mode for the default commit flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum SplitMode {
+    /// Single commit (default; today's behavior everywhere).
+    #[default]
+    Off,
+    /// Request a split plan and create one commit per group without prompts.
+    Auto,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "aic", version)]
 pub struct Cli {
@@ -33,6 +43,9 @@ pub struct Cli {
 
     #[arg(long, global = true)]
     quiet: bool,
+
+    #[arg(long, value_enum, default_value_t = SplitMode::Off)]
+    split: SplitMode,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     git_args: Vec<String>,
@@ -286,6 +299,7 @@ pub async fn run() -> Result<()> {
                 cli.dry_run,
                 cli.amend,
                 cli.provider,
+                cli.split,
                 output,
             )
             .await

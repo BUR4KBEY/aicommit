@@ -1,23 +1,26 @@
 use anyhow::{Result, bail};
 
 use crate::{
+    cli::SplitMode,
     config::Config,
     errors::AicError,
     generator, git,
     output::{
-        JsonCommit, JsonOutput, OutputMode, emit_json, json_error_output, mark_json_error_emitted,
-        split_message,
+        JsonCommit, JsonOutput, JsonSplitGroup, OutputMode, emit_json, json_error_output,
+        mark_json_error_emitted, split_message,
     },
 };
 
 use super::{
     apply_message_template,
+    auto_split::{AutoSplitOutcome, run_auto_split},
     git_sync::enforce_pre_commit_sync_guard,
-    helpers::{amend_commit_input, append_commit_history, enrich_context_with_branch},
+    helpers::{
+        CommitInputSource, amend_commit_input, append_commit_history, enrich_context_with_branch,
+    },
     push::{PushPlan, build_push_plan, execute_push_plan},
     staged_commit_input,
 };
-
 /// Machine entry point for `commit`: no prompts, no decoration.
 /// JSON mode prints exactly one JSON line on success; errors print exactly one
 /// JSON `error` object and return `Err`. Quiet mode prints the decisive line(s).
@@ -30,6 +33,7 @@ pub(super) async fn run_machine(
     dry_run: bool,
     amend: bool,
     provider_override: Option<String>,
+    split: SplitMode,
     output: OutputMode,
 ) -> Result<()> {
     // Resolve provider/model for JSON errors. Config load itself can fail;
@@ -48,6 +52,7 @@ pub(super) async fn run_machine(
         dry_run,
         amend,
         provider_override.as_deref(),
+        split,
         output,
     )
     .await;
@@ -145,6 +150,7 @@ async fn run_machine_inner(
     dry_run: bool,
     amend: bool,
     provider_override: Option<&str>,
+    split: SplitMode,
     output: OutputMode,
 ) -> Result<JsonOutput> {
     git::assert_git_repo()?;
@@ -186,6 +192,65 @@ async fn run_machine_inner(
 
     if commit_input.content.trim().is_empty() {
         bail!("no commit context available after applying ignore and binary filters");
+    }
+
+    if commit_input.source == CommitInputSource::Diff && split == SplitMode::Auto && !amend {
+        match run_auto_split(
+            &config,
+            &commit_input.content,
+            &extra_args,
+            &context,
+            full_gitmoji_spec,
+            split,
+            effective_skip,
+            dry_run,
+            amend,
+            &files,
+        )
+        .await?
+        {
+            AutoSplitOutcome::SingleCommit => {}
+            AutoSplitOutcome::DryRun(groups) => {
+                return Ok(JsonOutput {
+                    command: "commit".to_owned(),
+                    dry_run: true,
+                    provider: config.ai_provider.clone(),
+                    model: config.model.clone(),
+                    message: None,
+                    commits: Some(vec![]),
+                    split_plan: Some(groups.iter().map(JsonSplitGroup::from).collect()),
+                    error: None,
+                });
+            }
+            AutoSplitOutcome::Committed(commits) => {
+                let split_plan: Vec<JsonSplitGroup> = commits
+                    .iter()
+                    .map(|commit| JsonSplitGroup::from(&commit.draft.group))
+                    .collect();
+                let commits: Vec<JsonCommit> = commits
+                    .into_iter()
+                    .map(|commit| {
+                        let (subject, body) = split_message(&commit.draft.message);
+                        JsonCommit {
+                            hash: Some(commit.hash),
+                            subject,
+                            body,
+                            files: commit.draft.group.files,
+                        }
+                    })
+                    .collect();
+                return Ok(JsonOutput {
+                    command: "commit".to_owned(),
+                    dry_run: false,
+                    provider: config.ai_provider.clone(),
+                    model: config.model.clone(),
+                    message: None,
+                    commits: Some(commits),
+                    split_plan: Some(split_plan),
+                    error: None,
+                });
+            }
+        }
     }
 
     let message = apply_message_template(

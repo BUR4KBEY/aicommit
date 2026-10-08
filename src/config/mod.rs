@@ -26,6 +26,7 @@ pub const REPO_IGNORE_FILE: &str = ".aicommitignore";
 pub const DEFAULT_MAX_TOKENS_INPUT: usize = 128_000;
 pub const DEFAULT_MAX_TOKENS_OUTPUT: usize = 500;
 pub const DEFAULT_HTTP_TIMEOUT_SECS: usize = 120;
+pub const DEFAULT_SPLIT_MAX_GROUPS: usize = 10;
 
 pub const CONFIG_KEYS: &[&str] = &[
     "AIC_AI_PROVIDER",
@@ -47,6 +48,7 @@ pub const CONFIG_KEYS: &[&str] = &[
     "AIC_GITPUSH",
     "AIC_REMOTE_ICON_STYLE",
     "AIC_HOOK_AUTO_UNCOMMENT",
+    "AIC_SPLIT_MAX",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -70,6 +72,7 @@ pub struct Config {
     pub gitpush: bool,
     pub remote_icon_style: String,
     pub hook_auto_uncomment: bool,
+    pub split_max: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +102,7 @@ impl Default for Config {
             gitpush: true,
             remote_icon_style: "auto".to_owned(),
             hook_auto_uncomment: false,
+            split_max: DEFAULT_SPLIT_MAX_GROUPS,
         }
     }
 }

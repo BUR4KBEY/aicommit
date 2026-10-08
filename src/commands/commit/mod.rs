@@ -1,15 +1,18 @@
 use anyhow::{Result, bail};
 
 use crate::{
-    config::Config, errors::AicError, git, output::OutputMode, prompt::detect_scope_hints, ui,
+    cli::SplitMode, config::Config, errors::AicError, git, output::OutputMode,
+    prompt::detect_scope_hints, ui,
 };
 
 use self::{
+    auto_split::{AutoSplitOutcome, run_auto_split},
     git_sync::enforce_pre_commit_sync_guard,
     helpers::{CommitInput, CommitInputSource, amend_commit_input, enrich_context_with_branch},
     split::{generate_confirm_and_commit, maybe_execute_split_flow, should_offer_split},
 };
 
+mod auto_split;
 mod git_sync;
 mod helpers;
 mod machine;
@@ -25,6 +28,7 @@ pub async fn run(
     dry_run: bool,
     amend: bool,
     provider_override: Option<String>,
+    split: SplitMode,
     output: OutputMode,
 ) -> Result<()> {
     if output.is_machine() {
@@ -36,6 +40,7 @@ pub async fn run(
             dry_run,
             amend,
             provider_override,
+            split,
             output,
         )
         .await;
@@ -106,6 +111,26 @@ pub async fn run(
     }
 
     let context = enrich_context_with_branch(&context);
+
+    if commit_input.source == CommitInputSource::Diff && split == SplitMode::Auto && !amend {
+        match run_auto_split(
+            &config,
+            &commit_input.content,
+            &effective_args,
+            &context,
+            full_gitmoji_spec,
+            split,
+            skip_confirmation,
+            dry_run,
+            amend,
+            &files,
+        )
+        .await?
+        {
+            AutoSplitOutcome::SingleCommit => {}
+            AutoSplitOutcome::DryRun(_) | AutoSplitOutcome::Committed(_) => return Ok(()),
+        }
+    }
 
     if commit_input.source == CommitInputSource::Diff
         && should_offer_split(files.len(), skip_confirmation, dry_run, amend)
