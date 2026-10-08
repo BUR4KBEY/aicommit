@@ -1,6 +1,8 @@
 use anyhow::{Result, bail};
 
-use crate::{config::Config, errors::AicError, git, prompt::detect_scope_hints, ui};
+use crate::{
+    config::Config, errors::AicError, git, output::OutputMode, prompt::detect_scope_hints, ui,
+};
 
 use self::{
     git_sync::enforce_pre_commit_sync_guard,
@@ -10,10 +12,11 @@ use self::{
 
 mod git_sync;
 mod helpers;
+mod machine;
 mod push;
 mod split;
 mod staging;
-
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     extra_args: Vec<String>,
     context: String,
@@ -22,7 +25,21 @@ pub async fn run(
     dry_run: bool,
     amend: bool,
     provider_override: Option<String>,
+    output: OutputMode,
 ) -> Result<()> {
+    if output.is_machine() {
+        return machine::run_machine(
+            extra_args,
+            context,
+            full_gitmoji_spec,
+            skip_confirmation,
+            dry_run,
+            amend,
+            provider_override,
+            output,
+        )
+        .await;
+    }
     git::assert_git_repo()?;
     let config = Config::load_with_provider_override(provider_override.as_deref())?;
 

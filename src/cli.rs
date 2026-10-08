@@ -279,6 +279,7 @@ pub async fn run() -> Result<()> {
                 cli.dry_run,
                 cli.amend,
                 cli.provider,
+                output,
             )
             .await
         }
