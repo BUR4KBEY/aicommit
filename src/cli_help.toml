@@ -34,6 +34,15 @@ Suppress progress, menus, and report decoration; print just the message
 (dry-run) or the commit hash plus subject. Implies non-interactive
 behavior like -y.
 """
+
+[root.args.split]
+help = "Split-commit mode for non-interactive runs: off (default) or auto"
+long_help = """
+off creates one commit (today's behavior everywhere). auto requests a
+split plan and creates one commit per group without prompts; it requires
+-y or -d, falls back to one commit when the model proposes fewer than
+two usable groups or more groups than AIC_SPLIT_MAX, and never prompts.
+"""
 [root.args.git_args]
 help = "Arguments passed through to git commit"
 long_help = """
