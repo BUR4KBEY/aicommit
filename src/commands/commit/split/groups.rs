@@ -30,7 +30,7 @@ pub(super) fn choose_split_groups(
             Ok(Some(manual))
         }
         KEEP_ONE_COMMIT_OPTION => Ok(None),
-        ABORT_OPTION => bail!("commit aborted"),
+        ABORT_OPTION => bail!(crate::errors::AicError::Aborted),
         _ => bail!("invalid split grouping selection"),
     }
 }

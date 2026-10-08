@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     errors::AicError,
     git, history_store,
-    output::{OutputMode, emit_json, json_error_output},
+    output::{OutputMode, emit_json, json_error_output, mark_json_error_emitted},
     prompt::{build_review_messages, detect_scope_hints, review_system_prompt},
     token::{count_messages, count_tokens, split_diff},
     ui,
@@ -28,8 +28,15 @@ pub async fn run(
         bail!(AicError::MissingApiKey(config.ai_provider));
     }
 
+    // Nothing staged means the human flow cannot proceed without prompting;
+    // in a non-TTY context there is nothing to fall back to, so hint before
+    // the session header keeps stdout empty.
+    if git::staged_files()?.is_empty() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!("{}", crate::exit::NO_TTY_HINT);
+        bail!(AicError::NotTty);
+    }
+
     ui::section("Review session");
-    super::commit::ensure_staged_files(false, false).await?;
     let staged = git::staged_files()?;
     if staged.is_empty() {
         bail!(AicError::NoChanges);
@@ -140,8 +147,7 @@ async fn run_machine(
                 emit_json(&json_error_output(
                     "review", false, &provider, &model, &error,
                 ));
-            } else {
-                eprintln!("Error: {error:#}");
+                return Err(mark_json_error_emitted(error));
             }
             Err(error)
         }

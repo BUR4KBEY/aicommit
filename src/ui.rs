@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fmt::Display,
+    io::IsTerminal,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -506,68 +507,85 @@ pub fn hyperlink(text: &str, url: &str) -> String {
 }
 
 pub fn confirm(message: &str, default: bool) -> Result<bool> {
+    ensure_interactive_prompt(message)?;
+    let answer = Confirm::new(message)
+        .with_default(default)
+        .prompt()
+        .map_err(map_prompt_error)?;
+    mark_printed();
+    Ok(answer)
+}
+
+/// Fail fast when a prompt cannot run: machine output mode never prompts,
+/// and without a TTY on stdin inquire would only report
+/// `The input device is not a TTY`. The no-TTY path becomes
+/// [`AicError::NotTty`](crate::errors::AicError::NotTty) so the caller exits 2
+/// with the `-y`/`-d` hint instead.
+fn ensure_interactive_prompt(message: &str) -> Result<()> {
     if machine_mode() {
         anyhow::bail!(
             "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
         );
     }
-    let answer = Confirm::new(message).with_default(default).prompt()?;
-    mark_printed();
-    Ok(answer)
+    if !std::io::stdin().is_terminal() {
+        eprintln!("{}", crate::exit::NO_TTY_HINT);
+        anyhow::bail!(crate::errors::AicError::NotTty);
+    }
+    Ok(())
+}
+
+/// Translate inquire failures into actionable errors: a lost TTY mid-session
+/// (piped stdin after startup) surfaces the same hint as the pre-prompt
+/// guard instead of `The input device is not a TTY`.
+fn map_prompt_error(error: inquire::InquireError) -> Error {
+    if matches!(error, inquire::InquireError::NotTTY) {
+        eprintln!("{}", crate::exit::NO_TTY_HINT);
+        return anyhow::Error::new(crate::errors::AicError::NotTty);
+    }
+    anyhow::Error::new(error)
 }
 
 pub fn select<T>(message: &str, options: Vec<T>) -> Result<T>
 where
     T: Clone + Display,
 {
-    if machine_mode() {
-        anyhow::bail!(
-            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
-        );
-    }
-    let answer = Select::new(message, options).prompt()?;
+    ensure_interactive_prompt(message)?;
+    let answer = Select::new(message, options)
+        .prompt()
+        .map_err(map_prompt_error)?;
     mark_printed();
     Ok(answer)
 }
 
 pub fn multiselect(message: &str, options: Vec<String>) -> Result<Vec<String>> {
-    if machine_mode() {
-        anyhow::bail!(
-            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
-        );
-    }
-    let answer = MultiSelect::new(message, options).prompt()?;
+    ensure_interactive_prompt(message)?;
+    let answer = MultiSelect::new(message, options)
+        .prompt()
+        .map_err(map_prompt_error)?;
     mark_printed();
     Ok(answer)
 }
 
 pub fn text(message: &str, initial: Option<&str>) -> Result<String> {
-    if machine_mode() {
-        anyhow::bail!(
-            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
-        );
-    }
+    ensure_interactive_prompt(message)?;
     let prompt = Text::new(message);
     let prompt = if let Some(initial) = initial {
         prompt.with_initial_value(initial)
     } else {
         prompt
     };
-    let answer = prompt.prompt()?;
+    let answer = prompt.prompt().map_err(map_prompt_error)?;
     mark_printed();
     Ok(answer)
 }
 
 pub fn editor(message: &str, initial: &str) -> Result<String> {
-    if machine_mode() {
-        anyhow::bail!(
-            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
-        );
-    }
+    ensure_interactive_prompt(message)?;
     let answer = Editor::new(message)
         .with_predefined_text(initial)
         .with_file_extension(".md")
-        .prompt()?;
+        .prompt()
+        .map_err(map_prompt_error)?;
     mark_printed();
     Ok(answer)
 }

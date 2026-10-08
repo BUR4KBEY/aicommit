@@ -7,7 +7,8 @@ src/cli.rs              CLI parser and dispatch
 src/cli_help.toml       Bundled help text and config-key descriptions
 src/commands/           User-facing command flows
 src/config/             Defaults, global config, loading, parsing, validation, and persistence
-src/git/                Git command wrapper, repo helpers, branch logic, remotes, and hooks
+src/errors.rs            Typed failure modes shared by commands
+src/exit.rs              Process exit-code taxonomy (0/1/2) and the no-TTY hint
 src/ui.rs               Terminal styling layer: sections, steps, cards, spinners, prompt theme
 src/prompt/             Prompt builders, prompt-template interpolation, and response cleanup
 src/token.rs            Token counting and diff splitting

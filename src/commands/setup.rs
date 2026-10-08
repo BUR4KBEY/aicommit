@@ -9,6 +9,12 @@ use crate::{
 };
 
 pub async fn run() -> Result<()> {
+    // `aic setup` is interactive-only: keep the dedicated wording but exit 2
+    // with the same non-interactive hint printed first.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!("{}", crate::exit::NO_TTY_HINT);
+        anyhow::bail!("aic setup is interactive-only; rerun in a terminal with a TTY on stdin");
+    }
     ui::section("Setup");
     let providers = enabled_providers()
         .iter()

@@ -11,6 +11,15 @@ pub enum AicError {
     #[error("no changes detected")]
     NoChanges,
 
+    #[error("interactive mode requires a TTY")]
+    NotTty,
+
+    #[error("commit aborted")]
+    Aborted,
+
+    #[error("commit was created locally, but the push failed: {0}")]
+    CommitCreatedPushFailed(String),
+
     #[error("not a git repository")]
     NotGitRepository,
 

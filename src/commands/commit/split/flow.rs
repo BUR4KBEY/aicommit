@@ -61,7 +61,7 @@ pub(crate) async fn maybe_execute_split_flow(
 
     match selection.as_str() {
         CREATE_ONE_COMMIT_OPTION => return Ok(false),
-        ABORT_OPTION => bail!("commit aborted"),
+        ABORT_OPTION => bail!(crate::errors::AicError::Aborted),
         SPLIT_INTO_MULTIPLE_COMMITS_OPTION => {}
         _ => bail!("invalid split selection"),
     }
@@ -123,7 +123,7 @@ pub(crate) async fn maybe_execute_split_flow(
                 .await?;
             }
             EDIT_A_MESSAGE_OPTION => edit_split_commit_message(&mut drafts)?,
-            ABORT_OPTION => bail!("commit aborted"),
+            ABORT_OPTION => bail!(crate::errors::AicError::Aborted),
             _ => bail!("invalid split preview selection"),
         }
     }
@@ -198,7 +198,7 @@ pub(crate) async fn generate_confirm_and_commit(
                 .await;
             }
             REGENERATE_OPTION => continue,
-            _ => bail!("commit aborted"),
+            _ => bail!(crate::errors::AicError::Aborted),
         }
     }
 }

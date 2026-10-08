@@ -7,7 +7,7 @@ use crate::{
     generator, git,
     output::{
         JsonCommit, JsonOutput, JsonSplitGroup, OutputMode, emit_json, json_error_output,
-        split_message,
+        mark_json_error_emitted, split_message,
     },
 };
 
@@ -134,8 +134,7 @@ pub(super) async fn run_machine(
                 emit_json(&json_error_output(
                     "commit", dry_run, &provider, &model, &error,
                 ));
-            } else {
-                eprintln!("Error: {error:#}");
+                return Err(mark_json_error_emitted(error));
             }
             Err(error)
         }
