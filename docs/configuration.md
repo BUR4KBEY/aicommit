@@ -66,7 +66,10 @@ AIC_OMIT_SCOPE
 AIC_GITPUSH
 AIC_REMOTE_ICON_STYLE
 AIC_HOOK_AUTO_UNCOMMENT
+AIC_SPLIT_MAX
 ```
+
+`AIC_SPLIT_MAX` caps the number of groups `--split auto` will commit (default `10`, minimum `2`); a plan proposing more groups collapses to a single commit with a warning.
 
 `AIC_TOKENS_MAX_INPUT` defaults to `128000` for new configs. The `apple` provider caps it at `6000` at load time to fit the on-device model's context window; the cap is not written back to your config file.
 

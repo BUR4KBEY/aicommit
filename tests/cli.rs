@@ -1380,3 +1380,158 @@ fn json_pr_emits_draft_and_commits() {
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0]["subject"], "feat: second");
 }
+
+fn stage_two_heterogeneous_files(repo: &Path) {
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("README.md"), "docs\n").unwrap();
+    fs::write(repo.join("src/lib.rs"), "pub fn value() {}\n").unwrap();
+    run_git(repo, ["add", "README.md", "src/lib.rs"]);
+}
+
+#[test]
+fn split_auto_creates_one_commit_per_group() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let output = run_aic(repo.path(), &["--yes", "--split", "auto"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Split commit 1/2 created"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("Split commit 2/2 created"),
+        "stdout: {stdout}"
+    );
+
+    // TestEngine splits [first file] / [rest]; staged order is alphabetical.
+    let subjects = git_stdout(repo.path(), ["log", "--format=%s", "-2"]);
+    let lines: Vec<_> = subjects.lines().collect();
+    assert_eq!(lines, vec!["feat: update library", "docs: update readme"]);
+
+    let root_files = git_stdout(repo.path(), ["show", "--format=", "--name-only", "HEAD~1"]);
+    assert_eq!(root_files.lines().collect::<Vec<_>>(), vec!["README.md"]);
+    let head_files = git_stdout(repo.path(), ["show", "--format=", "--name-only", "HEAD"]);
+    assert_eq!(head_files.lines().collect::<Vec<_>>(), vec!["src/lib.rs"]);
+}
+
+#[test]
+fn split_auto_dry_run_prints_plan_without_committing() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let output = run_aic(repo.path(), &["--dry-run", "--split", "auto"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Split plan (2)"), "stdout: {stdout}");
+    assert!(stdout.contains("docs: update readme"), "stdout: {stdout}");
+    assert!(stdout.contains("feat: update library"), "stdout: {stdout}");
+
+    // No commits created: HEAD still unborn, staged set untouched.
+    assert!(
+        git_stdout(repo.path(), ["diff", "--cached", "--name-only"])
+            .lines()
+            .eq(["README.md", "src/lib.rs"])
+    );
+    assert!(
+        !Command::new("git")
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(repo.path())
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn split_auto_json_reports_plan_and_group_commits() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let output = run_aic(repo.path(), &["--yes", "--split", "auto", "--json"]);
+    assert!(output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["command"], "commit");
+    assert_eq!(value["dry_run"], false);
+    let plan = value["split_plan"].as_array().expect("split_plan array");
+    assert_eq!(plan.len(), 2);
+    assert_eq!(plan[0]["files"], json!(["README.md"]));
+    assert_eq!(plan[1]["files"], json!(["src/lib.rs"]));
+    let commits = value["commits"].as_array().expect("commits array");
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0]["subject"], "docs: update readme");
+    assert_eq!(commits[1]["subject"], "feat: update library");
+    assert_eq!(commits[0]["files"], json!(["README.md"]));
+    assert_eq!(commits[1]["files"], json!(["src/lib.rs"]));
+    assert!(commits[0]["hash"].as_str().is_some_and(|h| !h.is_empty()));
+    assert!(commits[1]["hash"].as_str().is_some_and(|h| !h.is_empty()));
+}
+
+#[test]
+fn split_auto_json_dry_run_reports_plan_only() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let output = run_aic(repo.path(), &["--dry-run", "--split", "auto", "--json"]);
+    assert!(output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["dry_run"], true);
+    assert_eq!(value["commits"], json!([]));
+    let plan = value["split_plan"].as_array().expect("split_plan array");
+    assert_eq!(plan.len(), 2);
+}
+
+#[test]
+fn yes_without_split_flag_stays_single_commit() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let output = run_aic(repo.path(), &["--yes"]);
+    assert!(output.status.success());
+    assert_eq!(
+        git_stdout(repo.path(), ["rev-list", "--count", "HEAD"]),
+        "1"
+    );
+    let files = git_stdout(repo.path(), ["show", "--format=", "--name-only", "HEAD"]);
+    assert_eq!(
+        files.lines().collect::<Vec<_>>(),
+        vec!["README.md", "src/lib.rs"]
+    );
+}
+
+#[test]
+fn split_auto_without_yes_or_dry_run_errors() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let output = run_aic(repo.path(), &["--split", "auto"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--split auto requires -y"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn split_auto_falls_back_to_single_commit_when_over_max() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let output = Command::cargo_bin("aic")
+        .unwrap()
+        .current_dir(repo.path())
+        .env("AIC_AI_PROVIDER", "test")
+        .env("AIC_GITPUSH", "false")
+        .env("AIC_SPLIT_MAX", "1")
+        .args(["--yes", "--split", "auto"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("AIC_SPLIT_MAX"), "stderr: {stderr}");
+}
