@@ -83,7 +83,7 @@ pub async fn ensure_staged_files(
                         continue 'existing_preflight;
                     }
                     StagingPlan::Continue => return Ok(StagingReport { listed_files: true }),
-                    StagingPlan::Abort => bail!("commit aborted"),
+                    StagingPlan::Abort => bail!(crate::errors::AicError::Aborted),
                     StagingPlan::AddFiles(_) => bail!("invalid existing staging plan"),
                 }
             },
@@ -119,7 +119,7 @@ fn apply_staging_plan(plan: StagingPlan) -> Result<()> {
         }
         StagingPlan::NoOp => Ok(()),
         StagingPlan::Continue => Ok(()),
-        StagingPlan::Abort => bail!("commit aborted"),
+        StagingPlan::Abort => bail!(crate::errors::AicError::Aborted),
     }
 }
 

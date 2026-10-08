@@ -149,6 +149,7 @@ fn reports_no_changes() {
         .env("AIC_AI_PROVIDER", "test")
         .assert()
         .failure()
+        .code(2)
         .stderr(predicate::str::contains("no changes detected"));
 }
 
@@ -352,6 +353,7 @@ fn yes_with_push_enabled_stops_before_commit_when_upstream_is_behind() {
         .arg("--yes")
         .assert()
         .failure()
+        .code(2)
         .stdout(predicate::str::contains("Branch sync required"))
         .stdout(predicate::str::contains("git pull --rebase"))
         .stderr(predicate::str::contains("branch is behind its upstream"));
@@ -432,6 +434,7 @@ fn yes_fails_when_multiple_remotes_are_configured_for_push() {
         .arg("--yes")
         .assert()
         .failure()
+        .code(2)
         .stderr(predicate::str::contains(
             "cannot auto-push with --yes because multiple remotes are configured",
         ));
@@ -759,6 +762,7 @@ fn pr_reports_missing_explicit_base() {
         .arg("--yes")
         .assert()
         .failure()
+        .code(2)
         .stderr(predicate::str::contains("pass an existing ref to --base"));
 }
 
@@ -1291,7 +1295,7 @@ fn json_dry_run_reports_message_and_empty_commits() {
 fn json_commit_error_is_single_error_object() {
     let repo = init_repo();
     let output = run_aic(repo.path(), &["--yes", "--json"]);
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
     let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
 
     assert_eq!(value["command"], "commit");
@@ -1305,7 +1309,7 @@ fn json_commit_error_is_single_error_object() {
 fn json_and_quiet_are_mutually_exclusive() {
     let repo = init_repo();
     let output = run_aic(repo.path(), &["--json", "--quiet"]);
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("mutually exclusive"), "stderr: {stderr}");

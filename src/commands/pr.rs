@@ -5,7 +5,9 @@ use crate::{
     errors::AicError,
     generator, git,
     history_store::{self, HistoryEntry},
-    output::{JsonCommit, JsonOutput, OutputMode, emit_json, json_error_output},
+    output::{
+        JsonCommit, JsonOutput, OutputMode, emit_json, json_error_output, mark_json_error_emitted,
+    },
     ui,
 };
 
@@ -120,7 +122,7 @@ pub async fn run(
                 );
             }
             "Regenerate" => continue,
-            _ => bail!("PR generation aborted"),
+            _ => bail!(crate::errors::AicError::Aborted),
         }
     }
 }
@@ -204,8 +206,7 @@ async fn run_machine(
                         &config.model,
                         &error,
                     ));
-                } else {
-                    eprintln!("Error: {error:#}");
+                    return Err(mark_json_error_emitted(error));
                 }
                 return Err(error);
             }
@@ -272,8 +273,7 @@ async fn run_machine(
                     &config.model,
                     &error,
                 ));
-            } else {
-                eprintln!("Error: {error:#}");
+                return Err(mark_json_error_emitted(error));
             }
             Err(error)
         }

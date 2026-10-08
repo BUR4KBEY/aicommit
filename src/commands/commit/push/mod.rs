@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 use crate::config::Config;
 
@@ -169,8 +169,10 @@ async fn push_to_remote(
                 return Ok(PushOutcome::Skipped);
             }
 
-            Err(anyhow!(
-                "commit was created locally, but the push was rejected; sync the branch and push again"
+            Err(anyhow::Error::new(
+                crate::errors::AicError::CommitCreatedPushFailed(
+                    "push was rejected; sync the branch and push again".to_owned(),
+                ),
             ))
         }
     }
@@ -234,8 +236,11 @@ async fn retry_push_after_rebase(
                     };
                     super::git_sync::render_guidance(config, "Push needs attention", &request)
                         .await;
-                    Err(anyhow!(
-                        "the push still failed after rebasing; inspect the branch state and try again"
+                    Err(anyhow::Error::new(
+                        crate::errors::AicError::CommitCreatedPushFailed(
+                            "push still failed after rebasing; inspect the branch state and try again"
+                                .to_owned(),
+                        ),
                     ))
                 }
             }
@@ -248,8 +253,10 @@ async fn retry_push_after_rebase(
                 git_output: Some(output),
             };
             super::git_sync::render_guidance(config, "Rebase needs attention", &request).await;
-            Err(anyhow!(
-                "rebase stopped with conflicts; resolve them before pushing again"
+            Err(anyhow::Error::new(
+                crate::errors::AicError::CommitCreatedPushFailed(
+                    "rebase stopped with conflicts; resolve them before pushing again".to_owned(),
+                ),
             ))
         }
         crate::git::PullRebaseOutcome::Failed { output } => {
@@ -260,8 +267,11 @@ async fn retry_push_after_rebase(
                 git_output: Some(output),
             };
             super::git_sync::render_guidance(config, "Rebase needs attention", &request).await;
-            Err(anyhow!(
-                "rebase recovery did not complete; inspect the branch and retry manually"
+            Err(anyhow::Error::new(
+                crate::errors::AicError::CommitCreatedPushFailed(
+                    "rebase recovery did not complete; inspect the branch and retry manually"
+                        .to_owned(),
+                ),
             ))
         }
     }

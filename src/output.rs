@@ -101,10 +101,16 @@ pub fn split_message(message: &str) -> (String, Option<String>) {
 /// Map an error to a stable `(code, retryable)` pair.
 /// `attempts` is always 1: aic does not retry provider calls.
 pub fn error_code(error: &anyhow::Error) -> (String, bool) {
+    let error = inner_json_error(error);
     if let Some(aic) = error.downcast_ref::<crate::errors::AicError>() {
         return match aic {
             crate::errors::AicError::NoChanges => ("no_changes".to_owned(), false),
             crate::errors::AicError::NotGitRepository => ("not_git_repo".to_owned(), false),
+            crate::errors::AicError::NotTty => ("not_a_tty".to_owned(), false),
+            crate::errors::AicError::Aborted => ("aborted".to_owned(), false),
+            crate::errors::AicError::CommitCreatedPushFailed(_) => {
+                ("push_failed".to_owned(), false)
+            }
             crate::errors::AicError::MissingApiKey(_) => ("missing_api_key".to_owned(), false),
             crate::errors::AicError::ModelNotFound { .. } => ("model_not_found".to_owned(), false),
             crate::errors::AicError::Authentication(_) => ("auth_failed".to_owned(), false),
@@ -124,13 +130,60 @@ pub fn error_code(error: &anyhow::Error) -> (String, bool) {
         };
     }
 
-    let message = error.to_string().to_lowercase();
-    if message.contains("aborted") || message.contains("cancelled") {
+    let message = error.to_string();
+    let lower = message.to_lowercase();
+    // Keep provider-call wrappers retryable: anyhow joins the outer context
+    // ("failed to call AI provider") with the normalized provider error
+    // below, so match on the full chain.
+    if lower.contains("failed to call ai provider")
+        && (lower.contains("rate limit")
+            || lower.contains("too many requests")
+            || lower.contains("service unavailable"))
+    {
+        return ("service_unavailable".to_owned(), true);
+    }
+    // The commit happened; the push did not. Mirrors `CommitCreatedPushFailed`.
+    if lower.contains("commit was created locally")
+        || lower.contains("still failed after rebasing")
+        || lower.contains("rebase stopped with conflicts")
+        || lower.contains("rebase recovery did not complete")
+    {
+        return ("push_failed".to_owned(), false);
+    }
+    if lower.contains("failed to call ai provider") || lower.contains("failed to parse ai response")
+    {
+        return ("provider_error".to_owned(), false);
+    }
+    if lower.contains("failed to parse split plan")
+        || lower.contains("split plan must contain")
+        || lower.contains("unparseable")
+    {
+        return ("invalid_split_plan".to_owned(), false);
+    }
+    if message.contains("aborted")
+        || message.contains("cancelled")
+        || lower.contains("aborted")
+        || lower.contains("cancelled")
+    {
         ("aborted".to_owned(), false)
-    } else if message.contains("no files staged") || message.contains("no changes") {
+    } else if lower.contains("no files staged") || lower.contains("no changes") {
         ("no_changes".to_owned(), false)
-    } else if message.contains("not a git repository") {
+    } else if lower.contains("not a git repository") {
         ("not_git_repo".to_owned(), false)
+    } else if lower.contains("requires a tty")
+        || lower.contains("not a tty")
+        || lower.contains("input device is not a tty")
+    {
+        ("not_a_tty".to_owned(), false)
+    } else if lower.contains("mutually exclusive") || lower.contains("requires -y") {
+        ("invalid_args".to_owned(), false)
+    } else if lower.contains("cannot auto-push")
+        || lower.contains("machine mode cannot")
+        || lower.contains("no files in the last commit")
+        || lower.contains("behind its upstream")
+        || lower.contains("has diverged")
+    {
+        ("misuse".to_owned(), false)
     } else {
         ("unknown".to_owned(), false)
     }
@@ -146,6 +199,46 @@ pub fn emit_json(output: &JsonOutput) {
     }
 }
 
+/// Marker so `main` skips its `Error:` line: `--json` flows already printed
+/// the machine-readable error object to stdout. The wrapper preserves
+/// downcasting for exit-code classification.
+#[derive(Debug)]
+struct JsonErrorEmitted(anyhow::Error);
+
+impl std::fmt::Display for JsonErrorEmitted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for JsonErrorEmitted {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+/// Wrap an error after its `--json` envelope was emitted to stdout.
+#[must_use]
+pub fn mark_json_error_emitted(error: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(JsonErrorEmitted(error))
+}
+
+/// True when a `--json` envelope was already printed for this error, so
+/// `main` must only set the exit code without duplicating stderr.
+#[must_use]
+pub fn json_error_already_emitted(error: &anyhow::Error) -> bool {
+    error.is::<JsonErrorEmitted>()
+}
+
+/// Peel the [`mark_json_error_emitted`] wrapper so exit-code and `error.code`
+/// classifiers see the original payload.
+#[must_use]
+pub fn inner_json_error(error: &anyhow::Error) -> &anyhow::Error {
+    match error.downcast_ref::<JsonErrorEmitted>() {
+        Some(JsonErrorEmitted(inner)) => inner,
+        None => error,
+    }
+}
 pub fn json_error_output(
     command: &str,
     dry_run: bool,
@@ -202,6 +295,41 @@ mod tests {
     fn maps_abort_message() {
         let error = anyhow::anyhow!("commit aborted");
         assert_eq!(error_code(&error), ("aborted".to_owned(), false));
+    }
+
+    #[test]
+    fn maps_not_a_tty_and_invalid_args() {
+        let error = anyhow::Error::new(crate::errors::AicError::NotTty);
+        assert_eq!(error_code(&error), ("not_a_tty".to_owned(), false));
+
+        let error = anyhow::anyhow!("The input device is not a TTY");
+        assert_eq!(error_code(&error), ("not_a_tty".to_owned(), false));
+
+        let error = anyhow::anyhow!("--json and --quiet are mutually exclusive");
+        assert_eq!(error_code(&error), ("invalid_args".to_owned(), false));
+    }
+
+    #[test]
+    fn maps_push_failed_and_invalid_split_plan() {
+        let error = anyhow::Error::new(crate::errors::AicError::CommitCreatedPushFailed(
+            "rejected".to_owned(),
+        ));
+        assert_eq!(error_code(&error), ("push_failed".to_owned(), false));
+
+        let error = anyhow::anyhow!("commit was created locally, but the push was rejected");
+        assert_eq!(error_code(&error), ("push_failed".to_owned(), false));
+
+        let error = anyhow::anyhow!("failed to parse split plan JSON: EOF");
+        assert_eq!(error_code(&error), ("invalid_split_plan".to_owned(), false));
+    }
+
+    #[test]
+    fn maps_provider_call_wrapper() {
+        let error = anyhow::anyhow!("failed to call AI provider: rate limit exceeded");
+        assert_eq!(error_code(&error), ("service_unavailable".to_owned(), true));
+
+        let error = anyhow::anyhow!("failed to parse AI response: EOF");
+        assert_eq!(error_code(&error), ("provider_error".to_owned(), false));
     }
 
     #[test]

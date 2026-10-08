@@ -4,6 +4,7 @@ pub mod cli_text;
 pub mod commands;
 pub mod config;
 pub mod errors;
+pub mod exit;
 pub mod generator;
 pub mod git;
 pub mod history_store;

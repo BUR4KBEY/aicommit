@@ -58,7 +58,7 @@ pub async fn run(
     if !skip_confirmation {
         ui::blank_line();
         if !ui::confirm("Rewrite these commit messages?", false)? {
-            bail!("rewrite aborted");
+            bail!(crate::errors::AicError::Aborted);
         }
     }
 

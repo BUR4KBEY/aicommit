@@ -4,7 +4,10 @@ use crate::{
     config::Config,
     errors::AicError,
     generator, git,
-    output::{JsonCommit, JsonOutput, OutputMode, emit_json, json_error_output, split_message},
+    output::{
+        JsonCommit, JsonOutput, OutputMode, emit_json, json_error_output, mark_json_error_emitted,
+        split_message,
+    },
 };
 
 use super::{
@@ -126,8 +129,7 @@ pub(super) async fn run_machine(
                 emit_json(&json_error_output(
                     "commit", dry_run, &provider, &model, &error,
                 ));
-            } else {
-                eprintln!("Error: {error:#}");
+                return Err(mark_json_error_emitted(error));
             }
             Err(error)
         }
