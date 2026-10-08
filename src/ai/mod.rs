@@ -53,11 +53,13 @@ pub fn engine_from_config(config: &Config) -> Result<Box<dyn AiEngine>> {
             Ok(Box::new(OpenAiCompatEngine::new(config.clone())?))
         }
         "anthropic" => Ok(Box::new(AnthropicEngine::new(config.clone())?)),
-        "claude-code" | "codex" | "copilot" => Ok(Box::new(CommandEngine::new(config.clone())?)),
+        "claude-code" | "codex" | "copilot" | "apple" => {
+            Ok(Box::new(CommandEngine::new(config.clone())?))
+        }
         "test" => Ok(Box::new(TestEngine)),
         unsupported => {
             bail!(
-                "provider '{unsupported}' is not supported; use openai, azure-openai, anthropic, groq, ollama, claude-code, codex, or copilot"
+                "provider '{unsupported}' is not supported; use openai, azure-openai, anthropic, groq, ollama, claude-code, codex, copilot, or apple"
             )
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "aicommit"
-version = "0.0.9"
+version = "0.0.10"
 edition = "2024"
 description = "Generate AI-assisted Git commit messages"
 license = "MIT"
@@ -12,27 +12,27 @@ path = "src/bin/aic.rs"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-chrono = { version = "0.4.44", features = ["serde"] }
-clap = { version = "4.5", features = ["derive"] }
-clap_complete = "4.5"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6", features = ["derive"] }
+clap_complete = "4.6"
 console = "0.16"
 directories = "6.0"
 ignore = "0.4"
 indicatif = "0.18"
 inquire = { version = "0.9", features = ["editor"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-termimad = "0.34.1"
+termimad = "0.35"
 textwrap = "0.16"
 thiserror = "2.0"
-tiktoken-rs = "0.7"
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "fs"] }
-toml_edit = { version = "0.23", features = ["serde"] }
+tiktoken-rs = "0.12"
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "fs"] }
+toml_edit = { version = "0.25", features = ["serde"] }
 svg = "0.18"
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = "2.2"
 predicates = "3.1"
-tempfile = "3.23"
+tempfile = "3.27"
 wiremock = "0.6"

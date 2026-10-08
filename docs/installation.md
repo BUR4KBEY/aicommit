@@ -107,3 +107,5 @@ For hosted providers such as OpenAI, Azure OpenAI, Anthropic, and Groq, have you
 If you plan to use `ollama`, start the local Ollama server and pull a model such as `llama3.2` before running `aic setup`.
 
 If you plan to use `claude-code`, `codex`, or `copilot`, install the matching CLI first and sign in there before running `aic setup`. Those providers reuse the external tool's existing authentication instead of `AIC_API_KEY`.
+
+If you plan to use `apple`, make sure Apple Intelligence is enabled and `fm available` reports the system model as available. The `fm` CLI ships with macOS, so there is nothing else to install or sign in to.

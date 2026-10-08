@@ -139,7 +139,7 @@ Detailed docs live in [`docs/`](docs/):
 - [Installation](docs/installation.md) - Homebrew, WinGet, GitHub Releases, from source
 - [Usage](docs/usage.md) - commit workflow, review, flags, hooks
 - [Configuration](docs/configuration.md) - keys, prompt templates, ignore files
-- [Providers](docs/providers.md) - OpenAI, Azure OpenAI, Anthropic, Groq, Ollama, Claude Code, Codex, GitHub Copilot CLI, custom endpoints
+- [Providers](docs/providers.md) - OpenAI, Azure OpenAI, Anthropic, Groq, Ollama, Claude Code, Codex, GitHub Copilot CLI, Apple Foundation Models, custom endpoints
 - [Architecture](docs/architecture.md) - module layout and data flow
 - [Roadmap](docs/roadmap.md) - planned and completed features
 

@@ -11,6 +11,7 @@ ollama
 claude-code
 codex
 copilot
+apple
 ```
 
 `openai`, `azure-openai`, `groq`, and `ollama` use the OpenAI chat-completions wire format.
@@ -18,6 +19,8 @@ copilot
 `anthropic` uses Anthropic's Messages API directly.
 
 `claude-code`, `codex`, and `copilot` are experimental local-binary providers. They use the installed `claude`, `codex`, and `copilot` CLIs from your `PATH`, so authentication is managed by those tools rather than `aic`.
+
+`apple` is an experimental local-binary provider for Apple's on-device Foundation Model. It runs the `fm respond` CLI that ships with macOS, so nothing leaves the machine and no API key is needed.
 
 ```mermaid
 flowchart TD
@@ -30,6 +33,7 @@ flowchart TD
     Provider -->|claude-code| Claude["Local claude CLI"]
     Provider -->|codex| Codex["Local codex exec CLI"]
     Provider -->|copilot| Copilot["Local GitHub Copilot CLI"]
+    Provider -->|apple| Apple["Local fm respond CLI"]
     OpenAI --> Chat["Chat completions request"]
     Azure --> Chat
     Groq --> Chat
@@ -38,9 +42,11 @@ flowchart TD
     Claude --> Prompt["Flattened prompt over stdin"]
     Codex --> Prompt
     Copilot --> Prompt
+    Apple --> Instructions["System prompt via -i, diff over stdin"]
     Chat --> Result["Generated commit message"]
     Messages --> Result
     Prompt --> Result
+    Instructions --> Result
 ```
 
 Configure OpenAI:
@@ -109,6 +115,22 @@ Configure GitHub Copilot CLI:
 aic config set AIC_AI_PROVIDER=copilot AIC_MODEL=default
 ```
 
+Configure Apple Foundation Models:
+
+```sh
+aic config set AIC_AI_PROVIDER=apple AIC_MODEL=default
+```
+
+The `apple` provider needs a Mac with Apple Intelligence enabled and the `fm` CLI on `PATH`; run `fm available` to check the model is ready. `aic` calls `fm respond --no-stream --greedy --guardrails permissive-content-transformations`, passing the system prompt and few-shot example through `-i` and only the staged diff over stdin. The alias `fm` is accepted and normalized to `apple`.
+
+The on-device model has an 8,192-token context window, so `aic` caps `AIC_TOKENS_MAX_INPUT` at `6000` for this provider (a lower configured value is kept). Larger diffs are split into chunks and synthesized as usual, which works but takes longer, and summaries of big multi-chunk diffs are noticeably less accurate than hosted models. It is best suited to small, focused commits. If the model still runs out of context, `aic` says so and suggests lowering `AIC_TOKENS_MAX_INPUT`.
+
+Because the on-device model is small, commit generation with `apple` adjusts the prompt and output:
+
+- It uses the compact `prompts/commit-system-apple.md` template, which leaves out the default style examples (the model tends to copy them) and tells the model not to restate the contents of added files as changes.
+- The diff starts with a staged-file outline (added or modified, with line counts), and added prose files (`.md`, `.mdx`, `.txt` and similar) longer than 40 lines are trimmed to their first 20 lines, so a new blog post or README doesn't drown out the rest of the change.
+- The generated message is tidied: stray code fences, Markdown bold, and trailing spaces are removed, a blank line is enforced between subject and body, and a GitMoji that contradicts the commit type (such as `✨ docs:`) is corrected when the short GitMoji convention is in use.
+
 For local CLI providers, `AIC_MODEL=default` means "use the CLI's own default model". `aic` does not pass a model flag through in v1.
 
 Use `--provider` to override the configured provider for a single run:
@@ -120,11 +142,12 @@ aic --provider ollama
 aic --provider claude-code
 aic review --provider codex
 aic review --provider copilot
+aic --provider apple
 aic log --provider codex --yes
 aic models --provider ollama
 ```
 
-The alias `claudecode` is accepted and normalized to `claude-code`.
+The alias `claudecode` is accepted and normalized to `claude-code`, and `fm` is normalized to `apple`.
 
 List cached or fallback models:
 
@@ -137,6 +160,7 @@ aic models --provider ollama
 aic models --provider azure-openai
 aic models --provider claude-code
 aic models --provider copilot
+aic models --provider apple
 ```
 
 API-provider model responses are cached at `~/.aicommit-models.json` with a 7-day TTL. Local CLI providers report the static `default` model and a note about the installed binary instead of calling a remote models endpoint.

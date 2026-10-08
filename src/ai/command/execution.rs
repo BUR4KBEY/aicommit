@@ -21,6 +21,7 @@ pub struct CommandEngine {
     pub(super) program: String,
     pub(super) args: Vec<String>,
     pub(super) cwd: PathBuf,
+    pub(super) instructions_flag: Option<String>,
 }
 
 impl CommandEngine {
@@ -30,22 +31,71 @@ impl CommandEngine {
         );
 
         for message in messages {
-            prompt.push_str("\n<message role=\"");
-            prompt.push_str(&message.role);
-            prompt.push_str("\">\n");
-            prompt.push_str(&message.content);
-            if !message.content.ends_with('\n') {
-                prompt.push('\n');
-            }
-            prompt.push_str("</message>\n");
+            push_tagged_message(&mut prompt, message);
         }
 
         prompt
     }
 
+    /// Build the per-call arguments and stdin. With an instructions flag, the
+    /// system prompt and any earlier turns (such as few-shot examples) travel
+    /// as instructions and only the final user message goes to stdin.
+    fn invocation(&self, messages: &[ChatMessage]) -> (Vec<String>, String) {
+        let mut args = self.args.clone();
+        let Some(flag) = &self.instructions_flag else {
+            return (args, Self::render_prompt(messages));
+        };
+        let Some((last, earlier)) = messages
+            .split_last()
+            .filter(|(last, _)| last.role == "user")
+        else {
+            return (args, Self::render_prompt(messages));
+        };
+
+        let mut instructions = earlier
+            .iter()
+            .filter(|message| message.role == "system")
+            .map(|message| message.content.trim())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let mut turns = earlier
+            .iter()
+            .filter(|message| message.role != "system")
+            .peekable();
+        if turns.peek().is_some() {
+            instructions.push_str("\n\nExample exchange:\n");
+            for message in turns {
+                push_tagged_message(&mut instructions, message);
+            }
+        }
+
+        if !instructions.trim().is_empty() {
+            args.push(flag.clone());
+            args.push(instructions);
+        }
+
+        (args, last.content.clone())
+    }
+
     fn resolved_program(&self) -> Option<PathBuf> {
         resolve_program_path(&self.program)
     }
+}
+
+fn push_tagged_message(output: &mut String, message: &ChatMessage) {
+    output.push_str("\n<message role=\"");
+    output.push_str(&message.role);
+    output.push_str("\">\n");
+    output.push_str(&message.content);
+    if !message.content.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str("</message>\n");
+}
+
+fn is_context_overflow(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("exceeded the model's context size") || lower.contains("context window")
 }
 
 enum CommandIoError {
@@ -94,11 +144,10 @@ fn run_command(
 #[async_trait]
 impl AiEngine for CommandEngine {
     async fn generate_commit_message(&self, messages: &[ChatMessage]) -> Result<String> {
-        let prompt = Self::render_prompt(messages);
+        let (args, prompt) = self.invocation(messages);
         let program = self
             .resolved_program()
             .unwrap_or_else(|| PathBuf::from(&self.program));
-        let args = self.args.clone();
         let cwd = self.cwd.clone();
 
         let result = tokio::task::spawn_blocking(move || run_command(program, args, cwd, prompt))
@@ -131,6 +180,14 @@ impl AiEngine for CommandEngine {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if is_context_overflow(&stderr) {
+                bail!(
+                    "{} provider ran out of model context via `{}` - lower AIC_TOKENS_MAX_INPUT (currently {}) or exclude bulky files via .aicommitignore",
+                    self.provider_label(),
+                    self.binary_hint(),
+                    self.config.tokens_max_input
+                );
+            }
             let detail = if stderr.is_empty() {
                 format!("exit status {}", output.status)
             } else {
@@ -440,5 +497,72 @@ mod tests {
 
         assert!(error.contains("copilot provider failed"));
         assert!(error.contains("boom"));
+    }
+
+    fn apple_engine(program: String, args: Vec<String>) -> CommandEngine {
+        CommandEngine::with_command(
+            Config {
+                ai_provider: "apple".to_owned(),
+                model: "default".to_owned(),
+                ..Config::default()
+            },
+            program,
+            args,
+            std::env::temp_dir(),
+        )
+        .with_instructions_flag("-i")
+    }
+
+    #[test]
+    fn instructions_flag_moves_system_and_examples_out_of_stdin() {
+        let engine = apple_engine("fm".to_owned(), vec!["respond".to_owned()]);
+        let messages = vec![
+            ChatMessage::system("Write a commit message."),
+            ChatMessage::user("example diff"),
+            ChatMessage::assistant("feat: example"),
+            ChatMessage::user("real diff"),
+        ];
+
+        let (args, stdin) = engine.invocation(&messages);
+
+        assert_eq!(stdin, "real diff");
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[..2], ["respond", "-i"]);
+        assert!(args[2].starts_with("Write a commit message.\n\nExample exchange:"));
+        assert!(args[2].contains("<message role=\"user\">\nexample diff\n</message>"));
+        assert!(args[2].contains("<message role=\"assistant\">\nfeat: example\n</message>"));
+        assert!(!args[2].contains("real diff"));
+    }
+
+    #[test]
+    fn instructions_flag_is_omitted_without_system_prompt() {
+        let engine = apple_engine("fm".to_owned(), vec!["respond".to_owned()]);
+
+        let (args, stdin) = engine.invocation(&test_messages());
+
+        assert_eq!(args, ["respond"]);
+        assert_eq!(stdin, "diff --git a/src/lib.rs b/src/lib.rs");
+    }
+
+    #[tokio::test]
+    async fn command_engine_reports_context_overflow_with_token_hint() {
+        let temp = TempDir::new().unwrap();
+        let command = install_test_command(
+            temp.path(),
+            "fm-overflow",
+            "",
+            "Error: The session's transcript exceeded the model's context size.",
+            1,
+        );
+        let engine = apple_engine(command.program, command.args);
+
+        let error = engine
+            .generate_commit_message(&test_messages())
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("apple provider ran out of model context"));
+        assert!(error.contains("lower AIC_TOKENS_MAX_INPUT"));
     }
 }

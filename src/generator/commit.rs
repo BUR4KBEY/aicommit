@@ -2,8 +2,10 @@ use anyhow::Result;
 
 use crate::{
     ai::engine_from_config,
-    config::Config,
-    prompt::{build_messages, initial_messages},
+    config::{Config, provider_uses_compact_prompts},
+    prompt::{
+        build_messages, compact_diff_for_small_model, initial_messages, tidy_small_model_commit,
+    },
     token::{count_messages, split_diff},
 };
 
@@ -40,6 +42,15 @@ pub async fn generate_commit_message(
         .saturating_sub(prompt_tokens)
         .saturating_sub(TOKEN_ADJUSTMENT);
 
+    let compact = provider_uses_compact_prompts(&config.ai_provider);
+    let compacted;
+    let diff = if compact {
+        compacted = compact_diff_for_small_model(diff);
+        compacted.as_str()
+    } else {
+        diff
+    };
+
     report(progress, GenerationProgress::Splitting);
     let chunks = split_diff(diff, max_request_tokens.max(1))?;
     let engine = engine_from_config(config)?;
@@ -54,7 +65,8 @@ pub async fn generate_commit_message(
         );
         let chat_messages =
             build_messages(config, &chunks[0], full_gitmoji_spec, context, staged_files)?;
-        return engine.generate_commit_message(&chat_messages).await;
+        let message = engine.generate_commit_message(&chat_messages).await?;
+        return Ok(finish_message(config, full_gitmoji_spec, message));
     }
 
     let mut summaries = Vec::with_capacity(chunks.len());
@@ -97,5 +109,14 @@ pub async fn generate_commit_message(
         &synthesis_context,
         staged_files,
     )?;
-    engine.generate_commit_message(&chat_messages).await
+    let message = engine.generate_commit_message(&chat_messages).await?;
+    Ok(finish_message(config, full_gitmoji_spec, message))
+}
+
+fn finish_message(config: &Config, full_gitmoji_spec: bool, message: String) -> String {
+    if provider_uses_compact_prompts(&config.ai_provider) {
+        tidy_small_model_commit(&message, config.emoji && !full_gitmoji_spec)
+    } else {
+        message
+    }
 }

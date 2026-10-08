@@ -7,14 +7,15 @@ This folder is the detailed documentation entry point for `aic`, the Rust CLI fo
 - [Installation](installation.md): install `aic` with Homebrew, WinGet, direct binaries, or from source.
 - [Usage](usage.md): run the commit-message workflow and pass Git flags through.
 - [Configuration](configuration.md): set provider, model, prompt, token, hook, and output behavior.
-- [Providers](providers.md): choose between OpenAI, Azure OpenAI, Anthropic, Groq, Ollama, Claude Code, Codex, and GitHub Copilot CLI.
+- [Providers](providers.md): choose between OpenAI, Azure OpenAI, Anthropic, Groq, Ollama, Claude Code, Codex, GitHub Copilot CLI, and Apple Foundation Models.
 - [Hooks](hooks.md): install or remove the Git `prepare-commit-msg` hook.
 - [Visualization](map.md): generate SVG treemaps, timelines, heatmaps, and activity graphs.
 - [Architecture](architecture.md): understand the Rust modules and data flow.
 - [Testing](testing.md): run the verification suite.
 - [Roadmap](roadmap.md): see deferred v1 items.
 - [Release Notes - Unreleased](releases/unreleased.md): upcoming changes not yet shipped in a tagged release.
-- [Release Notes - 0.0.9](releases/0.0.9.md): latest release notes.
+- [Release Notes - 0.0.10](releases/0.0.10.md): latest release notes.
+- [Release Notes - 0.0.9](releases/0.0.9.md): previous release notes.
 - [Release Notes - 0.0.8](releases/0.0.8.md): previous release notes.
 - [Release Notes - 0.0.7](releases/0.0.7.md): previous release notes.
 - [Release Notes - 0.0.6](releases/0.0.6.md): previous release notes.
