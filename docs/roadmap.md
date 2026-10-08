@@ -36,6 +36,6 @@ The v1 priority is a reliable Rust CLI for local commit generation through `aic`
 - **`aic init`** - generate a `.aicommitignore` with sensible defaults for the detected project type.
 - **Cost estimation** - show estimated token usage and approximate cost before sending to the API.
 - **Clipboard copy option** - add "Copy to clipboard" alongside Yes/No/Edit in the confirmation prompt.
-- **`--quiet` / `--json` output mode** - output only the generated message to stdout for piping into other tools.
+- ~~**`--quiet` / `--json` output mode**~~ - ✅ output only the generated message (quiet) or a single-line JSON envelope (json) on stdout for piping into other tools; see `docs/usage.md#machine-readable-output`.
 - Broader language prompt examples.
 - Release packaging for common package managers.
