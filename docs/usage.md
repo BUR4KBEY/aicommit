@@ -128,10 +128,32 @@ Notes:
 
 - `--json` requires `-y` for real commits (dry-run excepted); `--quiet` implies `-y`.
 - `--json` and `--quiet` are mutually exclusive.
-- On failure under `--json`, stdout holds one JSON `error` object (`code`, `message`, `retryable`, `attempts`) and the exit code is nonzero; diagnostics go to stderr.
+- On failure under `--json`, stdout holds one JSON `error` object (`code`, `message`, `retryable`, `attempts`) and the exit code follows the [taxonomy](#exit-codes); diagnostics go to stderr.
 - `--json` / `--quiet` commit runs are single-commit; the interactive split flow is not offered.
 - `review` in machine mode requires staged files (no staging menu).
 - Null/absent optional fields (`message`, `commits`, `split_plan`, `error`) may be omitted; consumers must tolerate additions.
+
+Stable `error.code` values mirror the taxonomy cases: `no_changes`, `not_git_repo`, `not_a_tty`, `aborted`, `invalid_args`, `invalid_config`, `missing_api_key`, `model_not_found`, `too_many_tokens`, `misuse` (other misuse/environment failures) map to exit 2; `auth_failed`, `rate_limited`, `insufficient_credits`, `service_unavailable`, `empty_response`, `provider_error`, `invalid_split_plan`, `push_failed`, and `unknown` map to exit 1. `retryable` is true only for transient provider failures (`rate_limited`, `service_unavailable`); `attempts` is always 1 because `aic` does not retry provider calls.
+
+## Exit Codes
+
+Every `aic` invocation exits with one of three codes (see `src/exit.rs`):
+
+| Code | Meaning | Examples |
+| ---- | ------- | -------- |
+| `0` | Success: the requested work completed. | Commit created (including a deliberate split-plan → single-commit fallback), dry-run message printed, review/PR text printed. |
+| `1` | Runtime failure: retry later or fix the failure, but do not rerun the same command blindly. | Provider down or rate-limited, push rejected after the commit was created locally, unparseable split plan. |
+| `2` | Misuse / non-actionable environment: fix the invocation or environment and rerun. | No changes detected, not a git repository, stdin is not a TTY, bad flags/config, missing API key, user abort. |
+
+Invariants: `aic` never exits `0` with the commit undone, and never exits `1` with the commit created.
+
+When a prompt would run but stdin is not a TTY, `aic` prints one actionable line to stderr (stdout stays empty) and exits `2`:
+
+```text
+aic: interactive mode requires a TTY — use "aic -y" for non-interactive commit (-y auto-stages), or "aic -d" to preview
+```
+
+This covers the staged-file menu, commit-mode (split) menu, message-accept menu, staging menu, interactive history picker, and `aic setup` (which is interactive-only and keeps its dedicated wording alongside the hint).
 
 ## Diff Review
 
