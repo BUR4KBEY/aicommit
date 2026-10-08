@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::commands;
+use crate::{commands, output::OutputMode};
 
 #[derive(Debug, Parser)]
 #[command(name = "aic", version)]
@@ -27,6 +27,12 @@ pub struct Cli {
 
     #[arg(long)]
     amend: bool,
+
+    #[arg(long, global = true)]
+    json: bool,
+
+    #[arg(long, global = true)]
+    quiet: bool,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     git_args: Vec<String>,
@@ -208,6 +214,9 @@ pub async fn run() -> Result<()> {
     crate::ui::init_prompt_theme();
     let mut matches = command().get_matches();
     let cli = Cli::from_arg_matches_mut(&mut matches)?;
+
+    let output = OutputMode::from_flags(cli.json, cli.quiet)?;
+    crate::ui::set_output_mode(output);
 
     match cli.command {
         Some(Command::Config(command)) => match command.mode {

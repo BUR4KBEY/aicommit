@@ -1214,3 +1214,41 @@ fn models_command_shows_apple_provider_note_for_override() {
         .stdout(predicate::str::contains("`fm respond`"))
         .stdout(predicate::str::contains("capped at 6000 tokens"));
 }
+
+fn run_aic(repo: &Path, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("aic")
+        .unwrap()
+        .current_dir(repo)
+        .env("AIC_AI_PROVIDER", "test")
+        .env("AIC_GITPUSH", "false")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn assert_single_line_json(stdout: &str) -> serde_json::Value {
+    let trimmed = stdout.trim();
+    assert!(
+        !trimmed.is_empty(),
+        "expected JSON on stdout, got empty output"
+    );
+    assert!(
+        !trimmed.contains('\n'),
+        "expected single-line JSON, got:\n{trimmed}"
+    );
+    assert!(
+        !stdout.contains('\x1b'),
+        "JSON output must not contain ANSI escapes"
+    );
+    serde_json::from_str(trimmed).expect("stdout should parse as JSON")
+}
+
+#[test]
+fn json_and_quiet_are_mutually_exclusive() {
+    let repo = init_repo();
+    let output = run_aic(repo.path(), &["--json", "--quiet"]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("mutually exclusive"), "stderr: {stderr}");
+}
