@@ -154,6 +154,39 @@ fn reports_no_changes() {
 }
 
 #[test]
+fn non_tty_commit_hints_at_non_interactive_modes() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+
+    // `assert_cmd` pipes stdin, so this exercises the non-TTY path: the
+    // staging/commit-mode prompts would run, but stdin is not a TTY.
+    let output = run_aic(repo.path(), &[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("aic: interactive mode requires a TTY"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("aic -y") && stderr.contains("aic -d"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn non_tty_commit_with_no_changes_exits_2_without_hint() {
+    // Scratch repo, nothing staged, non-TTY: benign "no changes" (exit 2)
+    // takes precedence over the no-TTY hint, and stdout stays empty.
+    let repo = init_repo();
+    let output = run_aic(repo.path(), &[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no changes detected"), "stderr: {stderr}");
+}
+
+#[test]
 fn top_level_help_describes_all_visible_commands() {
     let repo = init_repo();
 
