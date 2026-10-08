@@ -54,10 +54,11 @@ pub async fn run(
 
     enforce_pre_commit_sync_guard(&config, dry_run).await?;
 
-    // No-TTY runs have no usable fallback here (`-y` auto-stages and commits,
-    // `-d` only previews, `--amend`/`-y` stay single-commit): fail with the
-    // hint before printing a session header so stdout stays empty.
-    if !amend && !skip_confirmation {
+    // No-TTY runs that would prompt have no usable fallback: fail with the
+    // hint before printing a session header so stdout stays empty. Exempt
+    // paths that never prompt (`-y`, `-d`, and `--split auto`, which emits
+    // its own actionable `-y` error when neither flag is present).
+    if !amend && !skip_confirmation && !dry_run && split != SplitMode::Auto {
         let staged = git::staged_files()?;
         let changed = git::changed_files()?;
         if staged.is_empty() && changed.is_empty() {
