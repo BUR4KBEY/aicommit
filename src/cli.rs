@@ -243,7 +243,14 @@ pub async fn run() -> Result<()> {
             commands::review::run(command.context, cli.provider, output).await
         }
         Some(Command::Pr(command)) => {
-            commands::pr::run(command.context, command.base, command.yes, cli.provider).await
+            commands::pr::run(
+                command.context,
+                command.base,
+                command.yes,
+                cli.provider,
+                output,
+            )
+            .await
         }
         Some(Command::History(command)) => commands::history::run(
             command.count,

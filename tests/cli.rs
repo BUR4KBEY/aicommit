@@ -1361,3 +1361,22 @@ fn json_review_emits_message_envelope() {
     assert_eq!(value["provider"], "test");
     assert!(!value["message"].as_str().unwrap_or_default().is_empty());
 }
+
+#[test]
+fn json_pr_emits_draft_and_commits() {
+    let repo = init_repo();
+    commit_file(repo.path(), "src.txt", "hello\n", "feat: base");
+    fs::write(repo.path().join("src.txt"), "hello\nfeature\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+    run_git(repo.path(), ["commit", "-m", "feat: second"]);
+
+    let output = run_aic(repo.path(), &["pr", "--base", "HEAD~1", "--json"]);
+    assert!(output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["command"], "pr");
+    assert!(!value["message"].as_str().unwrap_or_default().is_empty());
+    let commits = value["commits"].as_array().expect("commits array");
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0]["subject"], "feat: second");
+}
