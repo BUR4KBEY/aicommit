@@ -240,7 +240,7 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Some(Command::Review(command)) => {
-            commands::review::run(command.context, cli.provider).await
+            commands::review::run(command.context, cli.provider, output).await
         }
         Some(Command::Pr(command)) => {
             commands::pr::run(command.context, command.base, command.yes, cli.provider).await

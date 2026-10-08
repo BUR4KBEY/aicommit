@@ -1346,3 +1346,18 @@ fn quiet_dry_run_prints_message_only() {
         "feat: add generated commit message"
     );
 }
+
+#[test]
+fn json_review_emits_message_envelope() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let output = run_aic(repo.path(), &["review", "--json"]);
+    assert!(output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["command"], "review");
+    assert_eq!(value["provider"], "test");
+    assert!(!value["message"].as_str().unwrap_or_default().is_empty());
+}
