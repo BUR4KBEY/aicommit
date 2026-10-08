@@ -19,6 +19,21 @@ help = "Generate and print the message without committing"
 [root.args.amend]
 help = "Regenerate and amend the last commit message"
 
+[root.args.json]
+help = "Emit a single-line JSON object on stdout; diagnostics go to stderr"
+long_help = """
+Emit a single-line JSON object on stdout for commit, review, and pr flows,
+with all progress and TUI output suppressed. On failure, print one JSON
+error object and exit nonzero. Requires -y for non-dry-run commits.
+"""
+
+[root.args.quiet]
+help = "Print only the decisive line(s): message, or commit hash + subject"
+long_help = """
+Suppress progress, menus, and report decoration; print just the message
+(dry-run) or the commit hash plus subject. Implies non-interactive
+behavior like -y.
+"""
 [root.args.git_args]
 help = "Arguments passed through to git commit"
 long_help = """

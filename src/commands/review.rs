@@ -5,6 +5,7 @@ use crate::{
     config::Config,
     errors::AicError,
     git, history_store,
+    output::{OutputMode, emit_json, json_error_output},
     prompt::{build_review_messages, detect_scope_hints, review_system_prompt},
     token::{count_messages, count_tokens, split_diff},
     ui,
@@ -12,7 +13,14 @@ use crate::{
 
 const TOKEN_ADJUSTMENT: usize = 20;
 
-pub async fn run(context: String, provider_override: Option<String>) -> Result<()> {
+pub async fn run(
+    context: String,
+    provider_override: Option<String>,
+    output: OutputMode,
+) -> Result<()> {
+    if output.is_machine() {
+        return run_machine(context, provider_override, output).await;
+    }
     git::assert_git_repo()?;
     let config = Config::load_with_provider_override(provider_override.as_deref())?;
 
@@ -93,6 +101,95 @@ pub async fn run(context: String, provider_override: Option<String>) -> Result<(
     );
 
     Ok(())
+}
+async fn run_machine(
+    context: String,
+    provider_override: Option<String>,
+    output: OutputMode,
+) -> Result<()> {
+    match run_machine_inner(&context, provider_override.as_deref()).await {
+        Ok((config, review, files)) => {
+            if output.is_json() {
+                use crate::output::JsonOutput;
+                emit_json(&JsonOutput {
+                    command: "review".to_owned(),
+                    dry_run: false,
+                    provider: config.ai_provider.clone(),
+                    model: config.model.clone(),
+                    message: Some(review),
+                    commits: None,
+                    split_plan: None,
+                    error: None,
+                });
+            } else {
+                println!("{review}");
+            }
+            let _ = files;
+            Ok(())
+        }
+        Err(error) => {
+            if output.is_json() {
+                let (provider, model) =
+                    match Config::load_with_provider_override(provider_override.as_deref()) {
+                        Ok(config) => (config.ai_provider, config.model),
+                        Err(_) => (
+                            provider_override.unwrap_or_else(|| Config::default().ai_provider),
+                            Config::default().model,
+                        ),
+                    };
+                emit_json(&json_error_output(
+                    "review", false, &provider, &model, &error,
+                ));
+            } else {
+                eprintln!("Error: {error:#}");
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn run_machine_inner(
+    context: &str,
+    provider_override: Option<&str>,
+) -> Result<(Config, String, Vec<String>)> {
+    git::assert_git_repo()?;
+    let config = Config::load_with_provider_override(provider_override)?;
+
+    if config.provider_needs_api_key() && config.api_key.is_none() {
+        bail!(AicError::MissingApiKey(config.ai_provider));
+    }
+
+    // No staging prompts in machine mode: review requires staged files.
+    // (Human path offers the staging menu when nothing is staged.)
+    let staged = git::staged_files()?;
+    if staged.is_empty() {
+        bail!(AicError::NoChanges);
+    }
+
+    let diff = git::staged_diff(&staged)?;
+    if diff.trim().is_empty() {
+        bail!("no diff content available after applying ignore and binary filters");
+    }
+
+    let review = generate_review(&config, &diff, context, None).await?;
+
+    if config.ai_provider != "test"
+        && let Err(error) = history_store::append_entry(&history_store::HistoryEntry {
+            timestamp: history_store::now_iso8601(),
+            kind: "review".to_owned(),
+            message: review.clone(),
+            repo_path: git::repo_root()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            files: staged.clone(),
+            provider: config.ai_provider.clone(),
+            model: config.model.clone(),
+        })
+    {
+        ui::warn(format!("failed to save history: {error}"));
+    }
+
+    Ok((config, review, staged))
 }
 
 async fn generate_review(

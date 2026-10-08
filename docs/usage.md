@@ -103,6 +103,36 @@ aic review --help
 
 Top-level commands, nested subcommands, and important positional arguments now include descriptions, so the CLI can be used as a quick reference without jumping back to the docs.
 
+## Machine-Readable Output
+
+For scripts and AI agents, `--json` and `--quiet` suppress all TUI chrome
+(progress spinners, message boxes, menus) on the `commit`, `review`, and `pr`
+flows. Human output without either flag is unchanged.
+
+```sh
+aic -y --json            # commit; stdout = one JSON object
+aic -d --json            # dry-run; "dry_run": true, "commits": []
+aic review --json        # review text in "message"
+aic pr --base main --json
+aic -y --quiet           # stdout = "<hash> <subject>"
+aic -d --quiet           # stdout = message only
+```
+
+`--json` prints a single-line object:
+
+```json
+{"command":"commit","dry_run":false,"provider":"openai","model":"gpt-5.4-mini","message":"feat: add json","commits":[{"hash":"abc1234","subject":"feat: add json","body":null,"files":["src.txt"]}],"split_plan":null,"error":null}
+```
+
+Notes:
+
+- `--json` requires `-y` for real commits (dry-run excepted); `--quiet` implies `-y`.
+- `--json` and `--quiet` are mutually exclusive.
+- On failure under `--json`, stdout holds one JSON `error` object (`code`, `message`, `retryable`, `attempts`) and the exit code is nonzero; diagnostics go to stderr.
+- `--json` / `--quiet` commit runs are single-commit; the interactive split flow is not offered.
+- `review` in machine mode requires staged files (no staging menu).
+- Null/absent optional fields (`message`, `commits`, `split_plan`, `error`) may be omitted; consumers must tolerate additions.
+
 ## Diff Review
 
 Get AI-powered feedback on staged changes before committing:

@@ -5,6 +5,7 @@ use crate::{
     errors::AicError,
     generator, git,
     history_store::{self, HistoryEntry},
+    output::{JsonCommit, JsonOutput, OutputMode, emit_json, json_error_output},
     ui,
 };
 
@@ -13,6 +14,7 @@ pub async fn run(
     base: Option<String>,
     skip_confirmation: bool,
     provider_override: Option<String>,
+    output: OutputMode,
 ) -> Result<()> {
     git::assert_git_repo()?;
     let config = Config::load_with_provider_override(provider_override.as_deref())?;
@@ -36,6 +38,21 @@ pub async fn run(
     let branch_name = git::current_branch();
     let ticket = git::ticket_from_branch();
 
+    if output.is_machine() {
+        return run_machine(
+            &config,
+            &context,
+            &base_ref,
+            branch_name.as_deref(),
+            ticket.as_deref(),
+            &commits,
+            &changed_files,
+            &diff,
+            provider_override.as_deref(),
+            output,
+        )
+        .await;
+    }
     ui::section("Pull request session");
     ui::session_step(format!(
         "Reading branch range against {base_ref} ({} commits, {}, {} lines)",
@@ -146,6 +163,120 @@ fn pr_message(title: &str, body: &str) -> String {
         title.trim().to_owned()
     } else {
         format!("{}\n\n{}", title.trim(), body.trim())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_machine(
+    config: &Config,
+    context: &str,
+    base_ref: &str,
+    branch_name: Option<&str>,
+    ticket: Option<&str>,
+    commits: &[git::CommitInfo],
+    changed_files: &[String],
+    diff: &str,
+    provider_override: Option<&str>,
+    output: OutputMode,
+) -> Result<()> {
+    let draft = generator::generate_pull_request(
+        config,
+        diff,
+        context,
+        base_ref,
+        branch_name,
+        ticket,
+        commits,
+        changed_files,
+        None,
+    )
+    .await;
+
+    match draft {
+        Ok(draft) => {
+            if draft.title.trim().is_empty() {
+                let error = anyhow::anyhow!("PR title cannot be empty");
+                if output.is_json() {
+                    emit_json(&json_error_output(
+                        "pr",
+                        false,
+                        &config.ai_provider,
+                        &config.model,
+                        &error,
+                    ));
+                } else {
+                    eprintln!("Error: {error:#}");
+                }
+                return Err(error);
+            }
+            // History mirrors finish(); warn (stderr) on failure in both modes.
+            if config.ai_provider != "test" {
+                let message = pr_message(&draft.title, &draft.body);
+                if let Err(error) = history_store::append_entry(&HistoryEntry {
+                    timestamp: history_store::now_iso8601(),
+                    kind: "pr".to_owned(),
+                    message,
+                    repo_path: git::repo_root()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
+                    files: changed_files.to_vec(),
+                    provider: config.ai_provider.clone(),
+                    model: config.model.clone(),
+                }) {
+                    ui::warn(format!("failed to save history: {error}"));
+                }
+            }
+
+            let message = pr_message(&draft.title, &draft.body);
+            if output.is_json() {
+                let json_commits = commits
+                    .iter()
+                    .map(|commit| {
+                        let body = commit.body.trim();
+                        JsonCommit {
+                            hash: Some(commit.hash.clone()),
+                            subject: commit.subject.clone(),
+                            body: if body.is_empty() {
+                                None
+                            } else {
+                                Some(body.to_owned())
+                            },
+                            files: Vec::new(),
+                        }
+                    })
+                    .collect();
+                emit_json(&JsonOutput {
+                    command: "pr".to_owned(),
+                    dry_run: false,
+                    provider: config.ai_provider.clone(),
+                    model: config.model.clone(),
+                    message: Some(message),
+                    commits: Some(json_commits),
+                    split_plan: None,
+                    error: None,
+                });
+            } else {
+                println!("{message}");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if output.is_json() {
+                // Config already resolved by caller; override only matters if
+                // this error came from config load (it cannot here).
+                let _ = provider_override;
+                emit_json(&json_error_output(
+                    "pr",
+                    false,
+                    &config.ai_provider,
+                    &config.model,
+                    &error,
+                ));
+            } else {
+                eprintln!("Error: {error:#}");
+            }
+            Err(error)
+        }
     }
 }
 

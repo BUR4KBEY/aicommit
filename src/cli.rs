@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::commands;
+use crate::{commands, output::OutputMode};
 
 #[derive(Debug, Parser)]
 #[command(name = "aic", version)]
@@ -27,6 +27,12 @@ pub struct Cli {
 
     #[arg(long)]
     amend: bool,
+
+    #[arg(long, global = true)]
+    json: bool,
+
+    #[arg(long, global = true)]
+    quiet: bool,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     git_args: Vec<String>,
@@ -209,6 +215,9 @@ pub async fn run() -> Result<()> {
     let mut matches = command().get_matches();
     let cli = Cli::from_arg_matches_mut(&mut matches)?;
 
+    let output = OutputMode::from_flags(cli.json, cli.quiet)?;
+    crate::ui::set_output_mode(output);
+
     match cli.command {
         Some(Command::Config(command)) => match command.mode {
             ConfigMode::Set { key_values } => commands::config::set(key_values),
@@ -231,10 +240,17 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Some(Command::Review(command)) => {
-            commands::review::run(command.context, cli.provider).await
+            commands::review::run(command.context, cli.provider, output).await
         }
         Some(Command::Pr(command)) => {
-            commands::pr::run(command.context, command.base, command.yes, cli.provider).await
+            commands::pr::run(
+                command.context,
+                command.base,
+                command.yes,
+                cli.provider,
+                output,
+            )
+            .await
         }
         Some(Command::History(command)) => commands::history::run(
             command.count,
@@ -270,6 +286,7 @@ pub async fn run() -> Result<()> {
                 cli.dry_run,
                 cli.amend,
                 cli.provider,
+                output,
             )
             .await
         }

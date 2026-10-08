@@ -23,6 +23,34 @@ const DEFAULT_ROOT_LIMIT: usize = 4;
 // is live - `finish_and_clear` it first).
 static LAST_LINE_BLANK: AtomicBool = AtomicBool::new(true);
 
+// Output mode selected once at startup via `set_output_mode`. Machine modes
+// (quiet/json) gate every stdout emission below; stderr (`warn`) and prompt
+// helpers are mode-agnostic because machine flows never reach them.
+static OUTPUT_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Select the process-wide output mode. Call once from `cli::run` before dispatch.
+pub fn set_output_mode(mode: crate::output::OutputMode) {
+    let value = match mode {
+        crate::output::OutputMode::Human => 0,
+        crate::output::OutputMode::Quiet => 1,
+        crate::output::OutputMode::Json => 2,
+    };
+    OUTPUT_MODE.store(value, Ordering::Relaxed);
+}
+
+fn output_mode() -> crate::output::OutputMode {
+    match OUTPUT_MODE.load(Ordering::Relaxed) {
+        1 => crate::output::OutputMode::Quiet,
+        2 => crate::output::OutputMode::Json,
+        _ => crate::output::OutputMode::Human,
+    }
+}
+
+/// True when all decorative stdout (sections, cards, spinners, lists) is suppressed.
+pub(crate) fn machine_mode() -> bool {
+    output_mode().is_machine()
+}
+
 fn mark_printed() {
     LAST_LINE_BLANK.store(false, Ordering::Relaxed);
 }
@@ -34,11 +62,17 @@ fn ensure_blank_line() {
 }
 
 pub fn info(message: impl AsRef<str>) {
+    if machine_mode() {
+        return;
+    }
     println!("{}", message.as_ref());
     mark_printed();
 }
 
 pub fn success(message: impl AsRef<str>) {
+    if machine_mode() {
+        return;
+    }
     println!("{} {}", style("✔").green(), style(message.as_ref()).green());
     mark_printed();
 }
@@ -52,12 +86,18 @@ pub fn warn(message: impl AsRef<str>) {
 }
 
 pub fn section(title: impl AsRef<str>) {
+    if machine_mode() {
+        return;
+    }
     ensure_blank_line();
     println!("{} {}", style("◇").cyan(), style(title.as_ref()).bold());
     mark_printed();
 }
 
 pub fn session_step(message: impl AsRef<str>) {
+    if machine_mode() {
+        return;
+    }
     println!(
         "{} {}",
         style("•").cyan().dim(),
@@ -67,16 +107,25 @@ pub fn session_step(message: impl AsRef<str>) {
 }
 
 pub fn blank_line() {
+    if machine_mode() {
+        return;
+    }
     println!();
     LAST_LINE_BLANK.store(true, Ordering::Relaxed);
 }
 
 pub fn bullet(message: impl AsRef<str>) {
+    if machine_mode() {
+        return;
+    }
     println!("  {} {}", style("•").cyan().dim(), message.as_ref());
     mark_printed();
 }
 
 pub fn secondary(message: impl AsRef<str>) {
+    if machine_mode() {
+        return;
+    }
     for line in message.as_ref().lines() {
         println!("  {}", style(line).dim());
     }
@@ -97,6 +146,9 @@ pub fn metadata_row(items: &[String]) {
 }
 
 pub fn headline(message: impl AsRef<str>) {
+    if machine_mode() {
+        return;
+    }
     println!("  {}", style(message.as_ref()).bold());
     mark_printed();
 }
@@ -133,6 +185,10 @@ pub fn file_metadata(files: &[String]) {
 
 pub fn spinner(message: impl Into<String>) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
+    if machine_mode() {
+        pb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        return pb;
+    }
     pb.set_style(
         ProgressStyle::with_template("{spinner:.cyan} {msg}")
             .unwrap_or_else(|_| ProgressStyle::default_spinner()),
@@ -276,11 +332,15 @@ impl StatusState {
 impl StatusSpinner {
     pub fn start(stage: impl Into<String>, pool: StatusPool) -> Self {
         let bar = ProgressBar::new_spinner();
-        bar.set_style(
-            ProgressStyle::with_template("{spinner:.cyan} {msg} {elapsed:.dim}")
-                .unwrap_or_else(|_| ProgressStyle::default_spinner()),
-        );
-        bar.enable_steady_tick(std::time::Duration::from_millis(80));
+        if machine_mode() {
+            bar.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        } else {
+            bar.set_style(
+                ProgressStyle::with_template("{spinner:.cyan} {msg} {elapsed:.dim}")
+                    .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+            );
+            bar.enable_steady_tick(std::time::Duration::from_millis(80));
+        }
 
         let state = std::sync::Arc::new(std::sync::Mutex::new(StatusState {
             stage: stage.into(),
@@ -359,6 +419,9 @@ impl StatusSpinner {
 
     /// Print a dim one-liner above the spinner without disturbing it.
     pub fn note(&self, message: impl AsRef<str>) {
+        if machine_mode() {
+            return;
+        }
         self.bar.println(format!(
             "{} {}",
             style("•").cyan().dim(),
@@ -394,6 +457,9 @@ impl Drop for StatusSpinner {
 }
 
 pub fn primary_card(title: &str, body: &str) {
+    if machine_mode() {
+        return;
+    }
     ensure_blank_line();
     for line in render_card_lines(title, body, card_width()) {
         println!("{line}");
@@ -402,6 +468,9 @@ pub fn primary_card(title: &str, body: &str) {
 }
 
 pub fn markdown_card(title: &str, body: &str) {
+    if machine_mode() {
+        return;
+    }
     ensure_blank_line();
     for line in render_markdown_card_lines(title, body, card_width()) {
         println!("{line}");
@@ -437,6 +506,11 @@ pub fn hyperlink(text: &str, url: &str) -> String {
 }
 
 pub fn confirm(message: &str, default: bool) -> Result<bool> {
+    if machine_mode() {
+        anyhow::bail!(
+            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
+        );
+    }
     let answer = Confirm::new(message).with_default(default).prompt()?;
     mark_printed();
     Ok(answer)
@@ -446,18 +520,33 @@ pub fn select<T>(message: &str, options: Vec<T>) -> Result<T>
 where
     T: Clone + Display,
 {
+    if machine_mode() {
+        anyhow::bail!(
+            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
+        );
+    }
     let answer = Select::new(message, options).prompt()?;
     mark_printed();
     Ok(answer)
 }
 
 pub fn multiselect(message: &str, options: Vec<String>) -> Result<Vec<String>> {
+    if machine_mode() {
+        anyhow::bail!(
+            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
+        );
+    }
     let answer = MultiSelect::new(message, options).prompt()?;
     mark_printed();
     Ok(answer)
 }
 
 pub fn text(message: &str, initial: Option<&str>) -> Result<String> {
+    if machine_mode() {
+        anyhow::bail!(
+            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
+        );
+    }
     let prompt = Text::new(message);
     let prompt = if let Some(initial) = initial {
         prompt.with_initial_value(initial)
@@ -470,6 +559,11 @@ pub fn text(message: &str, initial: Option<&str>) -> Result<String> {
 }
 
 pub fn editor(message: &str, initial: &str) -> Result<String> {
+    if machine_mode() {
+        anyhow::bail!(
+            "interactive prompt '{message}' is unavailable in machine output mode; rerun with -y"
+        );
+    }
     let answer = Editor::new(message)
         .with_predefined_text(initial)
         .with_file_extension(".md")

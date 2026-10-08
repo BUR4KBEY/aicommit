@@ -5,8 +5,7 @@ use crate::config::Config;
 mod display;
 mod plan;
 
-pub(crate) use plan::build_push_plan;
-use plan::{PushPlan, PushRemoteOption};
+pub(crate) use plan::{PushPlan, PushRemoteOption, build_push_plan};
 
 const PUSH_NOW_OPTION: &str = "Push now";
 const SKIP_PUSH_OPTION: &str = "Skip";

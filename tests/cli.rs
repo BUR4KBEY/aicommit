@@ -1214,3 +1214,169 @@ fn models_command_shows_apple_provider_note_for_override() {
         .stdout(predicate::str::contains("`fm respond`"))
         .stdout(predicate::str::contains("capped at 6000 tokens"));
 }
+
+fn run_aic(repo: &Path, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("aic")
+        .unwrap()
+        .current_dir(repo)
+        .env("AIC_AI_PROVIDER", "test")
+        .env("AIC_GITPUSH", "false")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn assert_single_line_json(stdout: &str) -> serde_json::Value {
+    let trimmed = stdout.trim();
+    assert!(
+        !trimmed.is_empty(),
+        "expected JSON on stdout, got empty output"
+    );
+    assert!(
+        !trimmed.contains('\n'),
+        "expected single-line JSON, got:\n{trimmed}"
+    );
+    assert!(
+        !stdout.contains('\x1b'),
+        "JSON output must not contain ANSI escapes"
+    );
+    serde_json::from_str(trimmed).expect("stdout should parse as JSON")
+}
+
+#[test]
+fn json_commit_emits_single_line_envelope() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let output = run_aic(repo.path(), &["--yes", "--json"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value = assert_single_line_json(&stdout);
+
+    assert_eq!(value["command"], "commit");
+    assert_eq!(value["dry_run"], false);
+    assert_eq!(value["provider"], "test");
+    assert_eq!(value["message"], "feat: add generated commit message");
+    let commits = value["commits"].as_array().expect("commits array");
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0]["subject"], "feat: add generated commit message");
+    assert_eq!(commits[0]["files"], json!(["src.txt"]));
+    assert!(commits[0]["hash"].as_str().is_some_and(|h| !h.is_empty()));
+    assert!(value.get("error").is_none());
+
+    assert_eq!(
+        git_stdout(repo.path(), ["log", "--format=%s", "-1"]),
+        "feat: add generated commit message"
+    );
+}
+
+#[test]
+fn json_dry_run_reports_message_and_empty_commits() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let output = run_aic(repo.path(), &["--dry-run", "--json"]);
+    assert!(output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["command"], "commit");
+    assert_eq!(value["dry_run"], true);
+    assert_eq!(value["message"], "feat: add generated commit message");
+    assert_eq!(value["commits"], json!([]));
+}
+
+#[test]
+fn json_commit_error_is_single_error_object() {
+    let repo = init_repo();
+    let output = run_aic(repo.path(), &["--yes", "--json"]);
+    assert!(!output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["command"], "commit");
+    assert_eq!(value["error"]["code"], "no_changes");
+    assert_eq!(value["error"]["retryable"], false);
+    assert_eq!(value["error"]["attempts"], 1);
+    assert!(value["error"]["message"].as_str().is_some());
+}
+
+#[test]
+fn json_and_quiet_are_mutually_exclusive() {
+    let repo = init_repo();
+    let output = run_aic(repo.path(), &["--json", "--quiet"]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("mutually exclusive"), "stderr: {stderr}");
+}
+
+#[test]
+fn quiet_commit_prints_hash_and_subject_only() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let output = run_aic(repo.path(), &["--yes", "--quiet"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains('\x1b'));
+    assert!(!stdout.contains("Commit session"));
+    assert!(!stdout.contains("Generated commit"));
+    let line = stdout.trim();
+    assert!(
+        line.ends_with("feat: add generated commit message"),
+        "quiet line: {line}"
+    );
+    // `<short-hash> feat: add generated commit message` = 1 hash + 5 subject words.
+    assert_eq!(line.split_whitespace().count(), 6);
+    assert_eq!(stdout.trim().lines().count(), 1);
+}
+
+#[test]
+fn quiet_dry_run_prints_message_only() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let output = run_aic(repo.path(), &["--dry-run", "--quiet"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "feat: add generated commit message"
+    );
+}
+
+#[test]
+fn json_review_emits_message_envelope() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let output = run_aic(repo.path(), &["review", "--json"]);
+    assert!(output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["command"], "review");
+    assert_eq!(value["provider"], "test");
+    assert!(!value["message"].as_str().unwrap_or_default().is_empty());
+}
+
+#[test]
+fn json_pr_emits_draft_and_commits() {
+    let repo = init_repo();
+    commit_file(repo.path(), "src.txt", "hello\n", "feat: base");
+    fs::write(repo.path().join("src.txt"), "hello\nfeature\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+    run_git(repo.path(), ["commit", "-m", "feat: second"]);
+
+    let output = run_aic(repo.path(), &["pr", "--base", "HEAD~1", "--json"]);
+    assert!(output.status.success());
+    let value = assert_single_line_json(&String::from_utf8_lossy(&output.stdout));
+
+    assert_eq!(value["command"], "pr");
+    assert!(!value["message"].as_str().unwrap_or_default().is_empty());
+    let commits = value["commits"].as_array().expect("commits array");
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0]["subject"], "feat: second");
+}
