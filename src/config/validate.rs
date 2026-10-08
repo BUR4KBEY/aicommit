@@ -36,5 +36,12 @@ pub fn validate_config(config: &Config) -> Result<()> {
         });
     }
 
+    if config.split_max < 2 {
+        bail!(AicError::InvalidConfigValue {
+            key: "AIC_SPLIT_MAX".to_owned(),
+            message: "must be at least 2".to_owned(),
+        });
+    }
+
     Ok(())
 }
