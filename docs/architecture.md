@@ -36,7 +36,7 @@ flowchart LR
     Ai --> Command["src/ai/command (claude-code, codex, copilot, apple)"]
 ```
 
-Provider implementations use an `AiEngine` trait that accepts normalized chat messages and returns a commit message string. This keeps the commit flow independent of transport details such as HTTP payloads or local subprocess execution.
+Provider implementations use an `AiEngine` trait that accepts normalized chat messages and returns a commit message string. This keeps the commit flow independent of transport details such as HTTP payloads or local subprocess execution. HTTP engines also implement `generate_with_options`, which takes a per-call `GenerationRequest` (output-token cap) and returns a `Generation` carrying the provider stop reason, so callers such as split-plan generation can detect a response that was cut off by the token cap and ask again with a larger one.
 
 Current provider families:
 

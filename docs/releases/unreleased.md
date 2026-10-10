@@ -16,3 +16,10 @@
 
 - New top-level `--split auto|off` flag (default `off`; zero behavior change): `aic -y --split auto` runs the full split pipeline without prompts — split plan, one message per group, commits in plan order — while `aic -d --split auto` prints the plan without committing. With `--json`, the plan is surfaced in `"split_plan": [...]` alongside one `commits` entry per group.
 - Consent guardrails: fewer than 2 usable groups, more groups than `AIC_SPLIT_MAX` (new config key, default `10`, minimum `2`), partially-staged files, single-file sets, `--amend`, and metadata-only inputs all fall back to the single-commit path with a stderr warning. `--split auto` requires `-y` (or `-d`) and never prompts. The interactive split picker is unchanged.
+
+## Split-Plan Robustness and Group Failure Semantics
+
+- Split-plan requests no longer inherit the commit-sized output cap: they ask for at least `4096` output tokens (bounded by what `AIC_TOKENS_MAX_INPUT` leaves for output). When the provider reports it stopped on the token cap mid-JSON, `aic` retries the plan once with a 4x cap instead of falling back to a single commit.
+- A plan that stays truncated now degrades to one commit with an actionable stderr warning (`the split plan response was truncated at the N-token plan cap; raise AIC_TOKENS_MAX_OUTPUT ...`) rather than a bare `EOF while parsing a string`.
+- Per-group commit messages are generated for every group before any commit is created (unchanged atomicity) and each group message is now attempted up to 4 times. After the retries are exhausted, the interactive split flow offers `Retry failed group` / `Commit remaining groups` / `Abort` instead of aborting the whole invocation, keeping the messages it already generated.
+- Non-interactive splits (`-y --split auto`, `--json`) never partial-commit: they exit nonzero with one line naming the group, the stage, and the attempts, e.g. `group 2 of 3: message generation failed after 4 attempts; nothing committed: ...`. The `--json` envelope reports the same as `error.code: "split_stage_failed"` with the real `attempts`.

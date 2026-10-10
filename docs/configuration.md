@@ -73,6 +73,8 @@ AIC_SPLIT_MAX
 
 `AIC_TOKENS_MAX_INPUT` defaults to `128000` for new configs. The `apple` provider caps it at `6000` at load time to fit the on-device model's context window; the cap is not written back to your config file.
 
+`AIC_TOKENS_MAX_OUTPUT` (default `500`) is sized for a single commit message. Split-plan requests are structured multi-artifact output — a title, a rationale, and a file list per group — so they ask the provider for at least `4096` output tokens (never more than what `AIC_TOKENS_MAX_INPUT` leaves for output). If the provider still stops on the token cap mid-plan, `aic` asks once more with a 4x cap; a plan that stays truncated degrades to one commit with a warning naming the cap and the keys to raise.
+
 `AIC_HTTP_TIMEOUT` caps each API request to the HTTP providers (`openai`, `azure-openai`, `anthropic`, `groq`, `ollama`) in seconds. It defaults to `120`; set it to `0` to disable the timeout entirely, or raise it if a slow local model (for example Ollama on a large prompt) needs more time. Local CLI providers (`claude-code`, `codex`, `copilot`, `apple`) are not affected.
 
 ## Large diffs
