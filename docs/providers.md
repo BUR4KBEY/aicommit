@@ -8,19 +8,24 @@ azure-openai
 anthropic
 groq
 ollama
+opencode-go
 claude-code
 codex
 copilot
 apple
 ```
 
-`openai`, `azure-openai`, `groq`, and `ollama` use the OpenAI chat-completions wire format.
+`openai`, `azure-openai`, `groq`, `ollama`, and `opencode-go` use the OpenAI chat-completions wire format.
 
 `anthropic` uses Anthropic's Messages API directly.
 
 `claude-code`, `codex`, and `copilot` are experimental local-binary providers. They use the installed `claude`, `codex`, and `copilot` CLIs from your `PATH`, so authentication is managed by those tools rather than `aic`.
 
 `apple` is an experimental local-binary provider for Apple's on-device Foundation Model. It runs the `fm respond` CLI that ships with macOS, so nothing leaves the machine and no API key is needed.
+
+`opencode-go` is the OpenCode Go gateway (`https://opencode.ai/zen/go/v1`), a hosted catalog of open coding models. `aic` sends the per-conversation `x-opencode-session` header the gateway requires, so no wrapper script or `AIC_API_CUSTOM_HEADERS` injection is needed. Not every Go model is reachable: only the ones served by the `/chat/completions` endpoint work, because `aic` does not speak the `/responses` or `/messages` wire formats. `aic models --provider opencode-go` lists the gateway's full live catalog, including models on those other endpoints, so treat it as a lookup rather than a list of usable choices; `glm-5.3-flash` and the other `gpt`-free open models such as `kimi-k3`, `deepseek-v4-pro`, and `mimo-v2.6-flash` are known to work.
+
+The session id is a fresh UUID generated once per `aic` process, so each run is a new conversation. Reusing one id across runs makes the gateway serve stale cached responses for identical prompts, which surfaces as `AI provider returned an empty response`. Set your own `x-opencode-session` header in `AIC_API_CUSTOM_HEADERS` to pin an id deliberately; your value wins over the generated one.
 
 ```mermaid
 flowchart TD
@@ -30,6 +35,7 @@ flowchart TD
     Provider -->|anthropic| Anthropic["Anthropic Messages API"]
     Provider -->|groq| Groq["Groq OpenAI-compatible API"]
     Provider -->|ollama| Ollama["Local Ollama OpenAI-compatible API"]
+    Provider -->|opencode-go| OpenCodeGo["OpenCode Go API"]
     Provider -->|claude-code| Claude["Local claude CLI"]
     Provider -->|codex| Codex["Local codex exec CLI"]
     Provider -->|copilot| Copilot["Local GitHub Copilot CLI"]
@@ -39,6 +45,7 @@ flowchart TD
     Groq --> Chat
     Ollama --> Chat
     Anthropic --> Messages["Messages request"]
+    OpenCodeGo --> Chat
     Claude --> Prompt["Flattened prompt over stdin"]
     Codex --> Prompt
     Copilot --> Prompt
@@ -96,6 +103,14 @@ aic config set AIC_AI_PROVIDER=ollama AIC_MODEL=llama3.2
 ```
 
 Ollama defaults to `http://localhost:11434/v1` and does not require `AIC_API_KEY`. Override `AIC_API_URL` if your Ollama server is running on another host or port.
+
+Configure OpenCode Go:
+
+```sh
+aic config set AIC_AI_PROVIDER=opencode-go AIC_API_KEY=<key> AIC_MODEL=glm-5.3-flash
+```
+
+OpenCode Go defaults to `https://opencode.ai/zen/go/v1` and the `glm-5.3-flash` model. Subscribe to OpenCode Go in the [OpenCode Console](https://opencode.ai/auth) to get an API key.
 
 Configure Claude Code:
 
@@ -159,6 +174,7 @@ aic models --provider groq
 aic models --provider ollama
 aic models --provider azure-openai
 aic models --provider claude-code
+aic models --provider opencode-go
 aic models --provider copilot
 aic models --provider apple
 ```

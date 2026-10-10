@@ -32,7 +32,7 @@ flowchart LR
     Generator --> Prompt["src/prompt"]
     Generator --> Token["src/token.rs"]
     Generator --> Ai["src/ai"]
-    Ai --> HTTP["HTTP provider (OpenAI, Azure, Anthropic, Groq, Ollama)"]
+    Ai --> HTTP["HTTP provider (OpenAI, Azure, Anthropic, Groq, Ollama, OpenCode Go)"]
     Ai --> Command["src/ai/command (claude-code, codex, copilot, apple)"]
 ```
 
@@ -40,7 +40,7 @@ Provider implementations use an `AiEngine` trait that accepts normalized chat me
 
 Current provider families:
 
-- OpenAI-compatible HTTP engines for `openai`, `azure-openai`, `groq`, and `ollama`
+- OpenAI-compatible HTTP engines for `openai`, `azure-openai`, `groq`, `ollama`, and `opencode-go`
 - Anthropic Messages API engine for `anthropic`
 - Command-backed engines for `claude-code`, `codex`, `copilot`, and `apple`. Most receive a flattened transcript over stdin; `apple` (`fm respond`) uses an instructions flag instead, so the system prompt and few-shot turns go through `-i` and only the final user message is piped in.
 

@@ -7,7 +7,7 @@ This folder is the detailed documentation entry point for `aic`, the Rust CLI fo
 - [Installation](installation.md): install `aic` with Homebrew, WinGet, direct binaries, or from source.
 - [Usage](usage.md): run the commit-message workflow and pass Git flags through.
 - [Configuration](configuration.md): set provider, model, prompt, token, hook, and output behavior.
-- [Providers](providers.md): choose between OpenAI, Azure OpenAI, Anthropic, Groq, Ollama, Claude Code, Codex, GitHub Copilot CLI, and Apple Foundation Models.
+- [Providers](providers.md): choose between OpenAI, Azure OpenAI, Anthropic, Groq, Ollama, OpenCode Go, Claude Code, Codex, GitHub Copilot CLI, and Apple Foundation Models.
 - [Hooks](hooks.md): install or remove the Git `prepare-commit-msg` hook.
 - [Visualization](map.md): generate SVG treemaps, timelines, heatmaps, and activity graphs.
 - [Architecture](architecture.md): understand the Rust modules and data flow.

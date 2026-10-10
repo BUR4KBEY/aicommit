@@ -75,7 +75,7 @@ AIC_SPLIT_MAX
 
 `AIC_TOKENS_MAX_OUTPUT` (default `500`) is sized for a single commit message. Split-plan requests are structured multi-artifact output — a title, a rationale, and a file list per group — so they ask the provider for at least `4096` output tokens (never more than what `AIC_TOKENS_MAX_INPUT` leaves for output). If the provider still stops on the token cap mid-plan, `aic` asks once more with a 4x cap; a plan that stays truncated degrades to one commit with a warning naming the cap and the keys to raise.
 
-`AIC_HTTP_TIMEOUT` caps each API request to the HTTP providers (`openai`, `azure-openai`, `anthropic`, `groq`, `ollama`) in seconds. It defaults to `120`; set it to `0` to disable the timeout entirely, or raise it if a slow local model (for example Ollama on a large prompt) needs more time. Local CLI providers (`claude-code`, `codex`, `copilot`, `apple`) are not affected.
+`AIC_HTTP_TIMEOUT` caps each API request to the HTTP providers (`openai`, `azure-openai`, `anthropic`, `groq`, `ollama`, `opencode-go`) in seconds. It defaults to `120`; set it to `0` to disable the timeout entirely, or raise it if a slow local model (for example Ollama on a large prompt) needs more time. Local CLI providers (`claude-code`, `codex`, `copilot`, `apple`) are not affected.
 
 ## Large diffs
 
@@ -110,6 +110,8 @@ For Anthropic, set `AIC_AI_PROVIDER=anthropic` and `AIC_API_KEY`, then optionall
 For Groq, set `AIC_AI_PROVIDER=groq` and `AIC_API_KEY`, then optionally override the default `llama-3.1-8b-instant` model with `AIC_MODEL`.
 
 For Ollama, set `AIC_AI_PROVIDER=ollama` and optionally override the default `llama3.2` model with `AIC_MODEL`. `AIC_API_KEY` is not required for the default local Ollama server.
+
+For OpenCode Go, set `AIC_AI_PROVIDER=opencode-go` and `AIC_API_KEY`, then optionally override the default `glm-5.3-flash` model with `AIC_MODEL`. `aic` sends the `x-opencode-session` header the gateway requires; override it through `AIC_API_CUSTOM_HEADERS` if you need a fixed id. See [Providers](providers.md).
 
 For local CLI providers, set `AIC_AI_PROVIDER=claude-code`, `AIC_AI_PROVIDER=codex`, or `AIC_AI_PROVIDER=copilot` and leave `AIC_MODEL=default`. These providers use the installed `claude`, `codex`, or `copilot` binary from `PATH` and rely on that CLI's existing login state instead of `AIC_API_KEY`.
 
