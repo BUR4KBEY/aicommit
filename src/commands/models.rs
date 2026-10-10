@@ -97,15 +97,9 @@ pub async fn run(provider_override: Option<String>, refresh: bool) -> Result<()>
 
 async fn fetch_models(provider: &str, config: &Config) -> Result<Vec<String>> {
     match provider {
-        "openai" | "groq" | "ollama" => {
+        "openai" | "groq" | "ollama" | "opencode-go" => {
             let fallback =
-                match provider {
-                    "groq" => default_api_url_for_provider("groq")
-                        .unwrap_or("https://api.groq.com/openai/v1"),
-                    "ollama" => default_api_url_for_provider("ollama")
-                        .unwrap_or("http://localhost:11434/v1"),
-                    _ => "https://api.openai.com/v1",
-                };
+                default_api_url_for_provider(provider).unwrap_or("https://api.openai.com/v1");
             let base = config.api_url.as_deref().unwrap_or(fallback);
             fetch_openai_models(
                 provider,
@@ -174,7 +168,7 @@ async fn fetch_openai_models(provider: &str, url: &str, config: &Config) -> Resu
         .into_iter()
         .map(|model| model.id)
         .filter(|model| match provider {
-            "groq" | "ollama" => true,
+            "groq" | "ollama" | "opencode-go" => true,
             _ => {
                 model.starts_with("gpt-")
                     || model.starts_with("o1")

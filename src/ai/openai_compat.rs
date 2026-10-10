@@ -1,3 +1,5 @@
+use std::{collections::BTreeMap, sync::LazyLock};
+
 use crate::{
     ai::{AiEngine, ChatMessage, Generation, GenerationRequest, is_truncation_reason},
     config::{Config, default_api_url_for_provider},
@@ -12,11 +14,21 @@ use serde::{Deserialize, Serialize};
 
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 
+/// OpenCode Go rejects requests without a per-conversation session header, and
+/// serves stale (sometimes empty) cached responses for a reused id. One `aic`
+/// process is one conversation, so a single id is generated per process.
+static OPENCODE_SESSION_ID: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
+
+fn has_header(headers: &BTreeMap<String, String>, name: &str) -> bool {
+    headers.keys().any(|key| key.eq_ignore_ascii_case(name))
+}
+
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatEngine {
     config: Config,
     client: Client,
     base_url: String,
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,16 +89,31 @@ impl OpenAiCompatEngine {
                         "https://api.groq.com/openai/v1".to_owned()
                     }
                 }),
+            "opencode-go" => config
+                .api_url
+                .clone()
+                .or_else(|| default_api_url_for_provider("opencode-go").map(str::to_owned))
+                .unwrap_or_else(|| "https://opencode.ai/zen/go/v1".to_owned()),
             _ => config
                 .api_url
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_owned()),
         };
 
+        // Scoped to the Go path: the sibling Zen gateway (/zen/v1) does not
+        // document the session header, and OpenCode Zen is a separate
+        // pay-per-token product from the Go subscription.
+        let is_opencode_go =
+            config.ai_provider == "opencode-go" || base_url.contains("opencode.ai/zen/go");
+        let session_id = (is_opencode_go
+            && !has_header(&config.api_custom_headers, "x-opencode-session"))
+        .then(|| OPENCODE_SESSION_ID.clone());
+
         Ok(Self {
             config,
             client,
             base_url,
+            session_id,
         })
     }
 
@@ -150,6 +177,10 @@ impl AiEngine for OpenAiCompatEngine {
             } else {
                 request.bearer_auth(api_key)
             };
+        }
+
+        if let Some(session_id) = &self.session_id {
+            request = request.header("x-opencode-session", session_id);
         }
 
         for (key, value) in &self.config.api_custom_headers {
@@ -219,5 +250,38 @@ mod tests {
             engine.chat_url(),
             "http://localhost:9000/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn opencode_go_url_gets_a_session_id_under_the_openai_provider_id() {
+        let config = Config {
+            ai_provider: "openai".to_owned(),
+            api_url: Some("https://opencode.ai/zen/go/v1".to_owned()),
+            ..Config::default()
+        };
+        let engine = OpenAiCompatEngine::new(config).unwrap();
+        assert!(engine.session_id.is_some());
+    }
+
+    #[test]
+    fn opencode_zen_url_gets_no_session_id() {
+        let config = Config {
+            ai_provider: "openai".to_owned(),
+            api_url: Some("https://opencode.ai/zen/v1".to_owned()),
+            ..Config::default()
+        };
+        let engine = OpenAiCompatEngine::new(config).unwrap();
+        assert!(engine.session_id.is_none());
+    }
+
+    #[test]
+    fn unrelated_urls_get_no_session_id() {
+        let config = Config {
+            ai_provider: "openai".to_owned(),
+            api_url: Some("https://api.openai.com/v1".to_owned()),
+            ..Config::default()
+        };
+        let engine = OpenAiCompatEngine::new(config).unwrap();
+        assert!(engine.session_id.is_none());
     }
 }

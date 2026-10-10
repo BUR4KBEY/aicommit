@@ -266,7 +266,7 @@ help = "Number of recent commits to include"
 help = "Color theme: github-light (default), github-dark, classic-light, classic-dark, solarized-light, solarized-dark, monokai, or dracula"
 
 [config_keys]
-AIC_AI_PROVIDER = "AI provider to use for commit generation: openai, azure-openai, anthropic, groq, ollama, claude-code, codex, copilot, or apple"
+AIC_AI_PROVIDER = "AI provider to use for commit generation: openai, azure-openai, anthropic, groq, ollama, opencode-go, claude-code, codex, copilot, or apple"
 AIC_API_KEY = "API key for the selected provider"
 AIC_API_URL = "Custom provider API URL; required for Azure OpenAI"
 AIC_API_CUSTOM_HEADERS = "JSON object of custom HTTP headers"

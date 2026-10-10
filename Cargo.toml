@@ -31,6 +31,8 @@ tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "fs"] }
 toml_edit = { version = "0.25", features = ["serde"] }
 svg = "0.18"
 
+uuid = { version = "1.28", features = ["v4"] }
+
 [dev-dependencies]
 assert_cmd = "2.2"
 predicates = "3.1"

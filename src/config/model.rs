@@ -4,6 +4,7 @@ const SUPPORTED_PROVIDERS: &[&str] = &[
     "anthropic",
     "groq",
     "ollama",
+    "opencode-go",
     "claude-code",
     "codex",
     "copilot",
@@ -22,6 +23,7 @@ pub fn default_model_for_provider(provider: &str) -> &'static str {
         "anthropic" => "claude-sonnet-4-20250514",
         "groq" => "llama-3.1-8b-instant",
         "ollama" => "llama3.2",
+        "opencode-go" => "glm-5.3-flash",
         "azure-openai" => "gpt-5.4-mini",
         _ => "gpt-5.4-mini",
     }
@@ -32,6 +34,7 @@ pub fn default_api_url_for_provider(provider: &str) -> Option<&'static str> {
         "anthropic" => Some("https://api.anthropic.com/v1"),
         "groq" => Some("https://api.groq.com/openai/v1"),
         "ollama" => Some("http://localhost:11434/v1"),
+        "opencode-go" => Some("https://opencode.ai/zen/go/v1"),
         _ => None,
     }
 }
@@ -59,6 +62,31 @@ pub fn model_list(provider: &str) -> &'static [&'static str] {
             "openai/gpt-oss-120b",
         ],
         "ollama" => &["llama3.2", "qwen3-coder", "gpt-oss:20b"],
+        // Offline fallback only; mirrors the `/chat/completions` rows of the
+        // OpenCode Go endpoint table. The rest of the catalog needs the
+        // `/responses` or `/messages` wire format, which aic does not speak.
+        "opencode-go" => &[
+            "glm-5.3-flash",
+            "glm-5.3",
+            "glm-5.2",
+            "kimi-k3",
+            "kimi-k2.7-code",
+            "kimi-k2.6",
+            "deepseek-v4-pro",
+            "deepseek-v4.1-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp",
+            "mimo-v2.6-pro",
+            "mimo-v2.6-flash",
+            "mimo-v2.5-pro",
+            "mimo-v2.5",
+            "longcat-2.0",
+            "longcat-2.5-preview-free",
+            "step-5-preview-free",
+            "hy4-preview",
+            "hy3",
+            "space-bunny",
+        ],
         "azure-openai" => &["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"],
         _ => &["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"],
     }

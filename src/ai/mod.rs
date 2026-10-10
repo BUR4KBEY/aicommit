@@ -88,7 +88,7 @@ pub trait AiEngine: Send + Sync {
 
 pub fn engine_from_config(config: &Config) -> Result<Box<dyn AiEngine>> {
     match config.ai_provider.as_str() {
-        "openai" | "azure-openai" | "groq" | "ollama" => {
+        "openai" | "azure-openai" | "groq" | "ollama" | "opencode-go" => {
             Ok(Box::new(OpenAiCompatEngine::new(config.clone())?))
         }
         "anthropic" => Ok(Box::new(AnthropicEngine::new(config.clone())?)),
@@ -98,7 +98,7 @@ pub fn engine_from_config(config: &Config) -> Result<Box<dyn AiEngine>> {
         "test" => Ok(Box::new(TestEngine)),
         unsupported => {
             bail!(
-                "provider '{unsupported}' is not supported; use openai, azure-openai, anthropic, groq, ollama, claude-code, codex, copilot, or apple"
+                "provider '{unsupported}' is not supported; use openai, azure-openai, anthropic, groq, ollama, opencode-go, claude-code, codex, copilot, or apple"
             )
         }
     }
