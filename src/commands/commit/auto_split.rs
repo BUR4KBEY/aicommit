@@ -85,9 +85,12 @@ pub(crate) async fn run_auto_split(
         return Ok(AutoSplitOutcome::SingleCommit);
     };
 
+    // No partial commits: a group without a message fails the whole split, so
+    // agents get one stderr line naming the group, the stage, and the attempts.
     let drafts =
         generate_split_commit_drafts(config, &groups, context, full_gitmoji_spec, extra_args)
-            .await?;
+            .await
+            .map_err(anyhow::Error::new)?;
 
     if dry_run {
         render_auto_split_plan(&drafts);

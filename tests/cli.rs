@@ -1572,3 +1572,324 @@ fn split_auto_falls_back_to_single_commit_when_over_max() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("AIC_SPLIT_MAX"), "stderr: {stderr}");
 }
+
+/// Marker from the split-plan system prompt, so a mock provider can tell plan
+/// requests from per-group commit-message requests.
+const SPLIT_PLAN_PROMPT_MARKER: &str = "decide whether it should become multiple commits";
+
+/// Every request body the mock provider served, in arrival order.
+type RequestLog = std::sync::mpsc::Receiver<String>;
+
+/// Stand-in for an OpenAI-compatible provider on a real localhost port, so the
+/// `aic` binary can be driven end to end. `handler` sees the raw request body
+/// and returns `(status, body)`.
+fn spawn_mock_provider<F>(handler: F) -> (String, RequestLog)
+where
+    F: Fn(&str) -> (u16, String) + Send + Sync + 'static,
+{
+    use std::{
+        io::Write,
+        net::TcpListener,
+        sync::{Arc, mpsc},
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (sender, log) = mpsc::channel();
+    let handler = Arc::new(handler);
+
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                continue;
+            };
+            let handler = Arc::clone(&handler);
+            let sender = sender.clone();
+            thread::spawn(move || {
+                let Some(body) = read_http_request_body(&mut stream) else {
+                    return;
+                };
+                sender.send(body.clone()).ok();
+                let (status, response) = handler(&body);
+                let head = format!(
+                    "HTTP/1.1 {status} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    if status == 200 { "OK" } else { "Error" },
+                    response.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            });
+        }
+    });
+
+    (format!("http://{address}/v1"), log)
+}
+
+fn read_http_request_body(stream: &mut impl std::io::Read) -> Option<String> {
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 4096];
+
+    loop {
+        let read = stream.read(&mut chunk).ok()?;
+        if read == 0 {
+            return None;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+
+        let Some(position) = buffer.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let body_start = position + 4;
+        let headers = String::from_utf8_lossy(&buffer[..body_start]).to_lowercase();
+        let length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                (name.trim() == "content-length").then(|| value.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+
+        if buffer.len() >= body_start + length {
+            return Some(
+                String::from_utf8_lossy(&buffer[body_start..body_start + length]).to_string(),
+            );
+        }
+    }
+}
+
+fn chat_reply(content: &str, finish_reason: Option<&str>) -> String {
+    let mut choice = json!({ "message": { "content": content } });
+    if let Some(reason) = finish_reason {
+        choice["finish_reason"] = json!(reason);
+    }
+    json!({ "choices": [choice] }).to_string()
+}
+
+fn split_plan_reply() -> String {
+    chat_reply(
+        r#"{"groups":[{"title":"docs","rationale":"README refresh","files":["README.md"]},{"title":"code","rationale":"library change","files":["src/lib.rs"]}]}"#,
+        Some("stop"),
+    )
+}
+
+/// Half a JSON plan: what a provider returns when it stops on the
+/// output-token cap mid-document.
+fn truncated_split_plan_reply() -> String {
+    chat_reply(
+        r#"{"groups":[{"title":"docs","rationale":"README refresh","files":["README.md"]},{"title":"cod"#,
+        Some("length"),
+    )
+}
+
+fn request_max_tokens(body: &str) -> Option<u64> {
+    let request: serde_json::Value = serde_json::from_str(body).ok()?;
+    request
+        .get("max_tokens")
+        .or_else(|| request.get("max_completion_tokens"))?
+        .as_u64()
+}
+
+fn run_aic_against_mock(repo: &Path, api_url: &str, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("aic")
+        .unwrap()
+        .current_dir(repo)
+        .env("AIC_AI_PROVIDER", "openai")
+        .env("AIC_API_KEY", "test-key")
+        .env("AIC_API_URL", api_url)
+        .env("AIC_GITPUSH", "false")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn recorded_bodies(log: RequestLog) -> Vec<String> {
+    log.try_iter().collect()
+}
+
+fn plan_request_caps(bodies: &[String]) -> Vec<u64> {
+    bodies
+        .iter()
+        .filter(|body| body.contains(SPLIT_PLAN_PROMPT_MARKER))
+        .filter_map(|body| request_max_tokens(body))
+        .collect()
+}
+
+#[test]
+fn split_plan_ignores_the_commit_output_cap_and_bumps_it_after_truncation() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let plan_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (api_url, log) = spawn_mock_provider({
+        let plan_calls = std::sync::Arc::clone(&plan_calls);
+        move |body| {
+            if body.contains(SPLIT_PLAN_PROMPT_MARKER) {
+                let first = plan_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+                if first {
+                    (200, truncated_split_plan_reply())
+                } else {
+                    (200, split_plan_reply())
+                }
+            } else {
+                (
+                    200,
+                    chat_reply("chore: sync the staged change", Some("stop")),
+                )
+            }
+        }
+    });
+
+    let output = run_aic_against_mock(repo.path(), &api_url, &["--yes", "--split", "auto"]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let caps = plan_request_caps(&recorded_bodies(log));
+    assert_eq!(caps.len(), 2, "a truncated plan must be retried once");
+    // 500 is the AIC_TOKENS_MAX_OUTPUT default; plans must not inherit it.
+    assert!(
+        caps[0] > 500,
+        "plan calls must not inherit the commit cap, got {caps:?}"
+    );
+    assert_eq!(caps[1], caps[0] * 4, "the retry must raise the cap");
+
+    assert_eq!(
+        git_stdout(repo.path(), ["rev-list", "--count", "HEAD"]),
+        "2",
+        "the retried plan must produce one commit per group"
+    );
+}
+
+#[test]
+fn truncated_split_plan_names_the_cause_and_the_fix() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let (api_url, _log) = spawn_mock_provider(|body| {
+        if body.contains(SPLIT_PLAN_PROMPT_MARKER) {
+            (200, truncated_split_plan_reply())
+        } else {
+            (
+                200,
+                chat_reply("docs: update both staged files", Some("stop")),
+            )
+        }
+    });
+
+    let output = run_aic_against_mock(repo.path(), &api_url, &["--yes", "--split", "auto"]);
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("split plan response was truncated"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("AIC_TOKENS_MAX_OUTPUT"), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("EOF while parsing"),
+        "stderr must not surface a raw JSON parse error: {stderr}"
+    );
+
+    assert_eq!(
+        git_stdout(repo.path(), ["rev-list", "--count", "HEAD"]),
+        "1",
+        "a truncated plan degrades to one commit"
+    );
+}
+
+#[test]
+fn unparseable_split_plan_still_degrades_to_one_commit() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let (api_url, _log) = spawn_mock_provider(|body| {
+        if body.contains(SPLIT_PLAN_PROMPT_MARKER) {
+            (
+                200,
+                chat_reply("I would split this into two commits", Some("stop")),
+            )
+        } else {
+            (
+                200,
+                chat_reply("docs: update both staged files", Some("stop")),
+            )
+        }
+    });
+
+    let output = run_aic_against_mock(repo.path(), &api_url, &["--yes", "--split", "auto"]);
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("could not build a split plan"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("failed to parse split plan JSON"),
+        "stderr: {stderr}"
+    );
+
+    assert_eq!(
+        git_stdout(repo.path(), ["rev-list", "--count", "HEAD"]),
+        "1"
+    );
+    let files = git_stdout(repo.path(), ["show", "--format=", "--name-only", "HEAD"]);
+    assert_eq!(
+        files.lines().collect::<Vec<_>>(),
+        vec!["README.md", "src/lib.rs"]
+    );
+}
+
+#[test]
+fn failing_group_message_commits_nothing_and_names_the_stage() {
+    let repo = init_repo();
+    stage_two_heterogeneous_files(repo.path());
+
+    let (api_url, log) = spawn_mock_provider(|body| {
+        if body.contains(SPLIT_PLAN_PROMPT_MARKER) {
+            return (200, split_plan_reply());
+        }
+        if body.contains("src/lib.rs") {
+            return (500, json!({ "error": "mock group failure" }).to_string());
+        }
+        (200, chat_reply("docs: update readme", Some("stop")))
+    });
+
+    let output = run_aic_against_mock(repo.path(), &api_url, &["--yes", "--split", "auto"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("group 2 of 2"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("message generation failed after 4 attempts"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("nothing committed"), "stderr: {stderr}");
+
+    let group_two_attempts = recorded_bodies(log)
+        .iter()
+        .filter(|body| !body.contains(SPLIT_PLAN_PROMPT_MARKER))
+        .filter(|body| body.contains("src/lib.rs"))
+        .count();
+    assert_eq!(
+        group_two_attempts, 4,
+        "the failing group must be retried before the split gives up"
+    );
+
+    assert!(
+        !Command::new("git")
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(repo.path())
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "no commit may exist after a group failure"
+    );
+    assert_eq!(
+        git_stdout(repo.path(), ["diff", "--cached", "--name-only"]),
+        "README.md\nsrc/lib.rs",
+        "the index must stay untouched"
+    );
+}

@@ -1,10 +1,11 @@
 use anyhow::{Result, bail};
 
-use crate::{config::Config, generator, git, ui};
+use crate::{config::Config, generator, git, prompt::SplitPlanGroup, ui};
 
 use super::{
     drafts::{
-        create_split_commits, edit_split_commit_message, generate_split_commit_drafts,
+        SplitCommitDraft, SplitDraftFailure, create_split_commits, edit_split_commit_message,
+        generate_split_commit_drafts, generate_split_commit_drafts_from,
         render_split_commit_preview,
     },
     groups::choose_split_groups,
@@ -19,6 +20,8 @@ const EDIT_A_MESSAGE_OPTION: &str = "Edit a message";
 const ACCEPT_OPTION: &str = "Accept";
 const REGENERATE_OPTION: &str = "Regenerate";
 const EDIT_OPTION: &str = "Edit";
+const RETRY_FAILED_GROUP_OPTION: &str = "Retry failed group";
+const COMMIT_REMAINING_GROUPS_OPTION: &str = "Commit remaining groups";
 
 pub(crate) fn should_offer_split(
     staged_file_count: usize,
@@ -92,8 +95,7 @@ pub(crate) async fn maybe_execute_split_flow(
     };
 
     let mut drafts =
-        generate_split_commit_drafts(config, &groups, context, full_gitmoji_spec, extra_args)
-            .await?;
+        resolve_split_drafts(config, &groups, context, full_gitmoji_spec, extra_args).await?;
 
     loop {
         render_split_commit_preview(&drafts);
@@ -125,6 +127,98 @@ pub(crate) async fn maybe_execute_split_flow(
             EDIT_A_MESSAGE_OPTION => edit_split_commit_message(&mut drafts)?,
             ABORT_OPTION => bail!(crate::errors::AicError::Aborted),
             _ => bail!("invalid split preview selection"),
+        }
+    }
+}
+
+/// Draft every group message, recovering from a per-group failure instead of
+/// throwing away the whole split cycle. Nothing is committed until every group
+/// has a message or the user picks "commit the remaining groups".
+async fn resolve_split_drafts(
+    config: &Config,
+    groups: &[SplitPlanGroup],
+    context: &str,
+    full_gitmoji_spec: bool,
+    extra_args: &[String],
+) -> Result<Vec<SplitCommitDraft>> {
+    match generate_split_commit_drafts(config, groups, context, full_gitmoji_spec, extra_args).await
+    {
+        Ok(drafts) => Ok(drafts),
+        Err(failure) => {
+            recover_from_draft_failure(
+                config,
+                failure,
+                groups,
+                context,
+                full_gitmoji_spec,
+                extra_args,
+            )
+            .await
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn recover_from_draft_failure(
+    config: &Config,
+    failure: SplitDraftFailure,
+    groups: &[SplitPlanGroup],
+    context: &str,
+    full_gitmoji_spec: bool,
+    extra_args: &[String],
+) -> Result<Vec<SplitCommitDraft>> {
+    let mut failure = failure;
+
+    loop {
+        ui::warn(format!("{failure}"));
+
+        let selection = ui::select(
+            &format!(
+                "Split commit {} has no message. How would you like to recover?",
+                failure.position()
+            ),
+            vec![
+                RETRY_FAILED_GROUP_OPTION.to_owned(),
+                COMMIT_REMAINING_GROUPS_OPTION.to_owned(),
+                ABORT_OPTION.to_owned(),
+            ],
+        )?;
+
+        match selection.as_str() {
+            RETRY_FAILED_GROUP_OPTION => {
+                let start = failure.index;
+                let kept = std::mem::take(&mut failure.drafts);
+                match generate_split_commit_drafts_from(
+                    config,
+                    groups,
+                    start,
+                    context,
+                    full_gitmoji_spec,
+                    extra_args,
+                )
+                .await
+                {
+                    Ok(mut rest) => {
+                        let mut drafts = kept;
+                        drafts.append(&mut rest);
+                        return Ok(drafts);
+                    }
+                    Err(mut next_failure) => {
+                        // A resumed run only drafts the groups after the
+                        // failure, so hand it back what it already had.
+                        next_failure.drafts = kept;
+                        failure = next_failure;
+                    }
+                }
+            }
+            COMMIT_REMAINING_GROUPS_OPTION => {
+                if failure.drafts.is_empty() {
+                    bail!("no split commit messages were generated; nothing committed");
+                }
+                return Ok(std::mem::take(&mut failure.drafts));
+            }
+            ABORT_OPTION => bail!(crate::errors::AicError::Aborted),
+            _ => bail!("invalid split draft recovery selection"),
         }
     }
 }

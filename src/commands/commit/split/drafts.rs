@@ -14,18 +14,123 @@ pub(crate) struct SplitCommitDraft {
     pub(crate) message: String,
 }
 
+/// Attempts per group message before the flow surfaces the failure. Small on
+/// purpose: a group that keeps failing is a provider or config problem, not a
+/// blip, and every retry costs a full plan-sized round trip.
+pub(crate) const GROUP_MESSAGE_ATTEMPTS: u32 = 4;
+
+/// One group could not be drafted. No commit exists yet, so the caller picks
+/// between retrying that group, committing the drafts gathered before it, or
+/// aborting the whole split.
+#[derive(Debug)]
+pub(crate) struct SplitDraftFailure {
+    /// Drafts for the groups before the failure, in plan order.
+    pub(crate) drafts: Vec<SplitCommitDraft>,
+    /// Zero-based index of the group that failed.
+    pub(crate) index: usize,
+    pub(crate) total: usize,
+    /// Which step of the group pipeline failed, e.g. "message generation".
+    pub(crate) stage: &'static str,
+    pub(crate) attempts: u32,
+    pub(crate) source: anyhow::Error,
+}
+
+impl SplitDraftFailure {
+    /// 1-based position of the failed group, for humans and stderr.
+    pub(crate) fn position(&self) -> usize {
+        self.index + 1
+    }
+}
+
+impl std::fmt::Display for SplitDraftFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "group {} of {}: {} failed after {} attempts; nothing committed: {:#}",
+            self.position(),
+            self.total,
+            self.stage,
+            self.attempts,
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for SplitDraftFailure {}
+
 pub(crate) async fn generate_split_commit_drafts(
     config: &Config,
     groups: &[SplitPlanGroup],
     context: &str,
     full_gitmoji_spec: bool,
     extra_args: &[String],
-) -> Result<Vec<SplitCommitDraft>> {
-    let mut drafts = Vec::with_capacity(groups.len());
+) -> Result<Vec<SplitCommitDraft>, SplitDraftFailure> {
+    generate_split_commit_drafts_from(config, groups, 0, context, full_gitmoji_spec, extra_args)
+        .await
+}
 
-    for (index, group) in groups.iter().enumerate() {
-        let group_diff = git::staged_diff(&group.files)?;
-        let draft_label = format!("commit {}/{}", index + 1, groups.len());
+/// Draft the messages for `groups[start..]`. A resumed run keeps the drafts
+/// that already succeeded, so a retry never re-bills or re-renders them.
+pub(crate) async fn generate_split_commit_drafts_from(
+    config: &Config,
+    groups: &[SplitPlanGroup],
+    start: usize,
+    context: &str,
+    full_gitmoji_spec: bool,
+    extra_args: &[String],
+) -> Result<Vec<SplitCommitDraft>, SplitDraftFailure> {
+    let mut drafts = Vec::with_capacity(groups.len().saturating_sub(start));
+
+    for (index, group) in groups.iter().enumerate().skip(start) {
+        let draft = match generate_group_draft(
+            config,
+            group,
+            index,
+            groups.len(),
+            context,
+            full_gitmoji_spec,
+            extra_args,
+        )
+        .await
+        {
+            Ok(draft) => draft,
+            Err(mut failure) => {
+                // Hand the successful drafts back so the interactive flow can
+                // offer "commit the remaining groups" without regenerating.
+                failure.drafts = std::mem::take(&mut drafts);
+                return Err(failure);
+            }
+        };
+        drafts.push(draft);
+    }
+
+    Ok(drafts)
+}
+
+async fn generate_group_draft(
+    config: &Config,
+    group: &SplitPlanGroup,
+    index: usize,
+    total: usize,
+    context: &str,
+    full_gitmoji_spec: bool,
+    extra_args: &[String],
+) -> Result<SplitCommitDraft, SplitDraftFailure> {
+    let failure = |stage: &'static str, attempts: u32, source: anyhow::Error| SplitDraftFailure {
+        drafts: Vec::new(),
+        index,
+        total,
+        stage,
+        attempts,
+        source,
+    };
+
+    let group_diff =
+        git::staged_diff(&group.files).map_err(|error| failure("staged diff read", 0, error))?;
+    let draft_label = format!("commit {}/{}", index + 1, total);
+
+    let mut last_error = None;
+    for _ in 0..GROUP_MESSAGE_ATTEMPTS {
         let spinner = ui::StatusSpinner::start(
             format!("Drafting {}: {}", draft_label, group.title),
             ui::StatusPool::Waiting,
@@ -33,7 +138,7 @@ pub(crate) async fn generate_split_commit_drafts(
         let progress = |event: generator::GenerationProgress| {
             spinner.on_generation_progress(event, &draft_label)
         };
-        let mut message = generator::generate_commit_message(
+        let generated = generator::generate_commit_message(
             config,
             &group_diff,
             full_gitmoji_spec,
@@ -41,16 +146,25 @@ pub(crate) async fn generate_split_commit_drafts(
             &group.files,
             Some(&progress),
         )
-        .await?;
+        .await;
         spinner.finish_and_clear();
-        message = apply_message_template(config, extra_args, &message);
-        drafts.push(SplitCommitDraft {
-            group: group.clone(),
-            message,
-        });
+
+        match generated {
+            Ok(message) => {
+                return Ok(SplitCommitDraft {
+                    group: group.clone(),
+                    message: apply_message_template(config, extra_args, &message),
+                });
+            }
+            Err(error) => last_error = Some(error),
+        }
     }
 
-    Ok(drafts)
+    Err(failure(
+        "message generation",
+        GROUP_MESSAGE_ATTEMPTS,
+        last_error.unwrap_or_else(|| anyhow::anyhow!("provider returned no message")),
+    ))
 }
 
 pub(super) fn render_split_commit_preview(drafts: &[SplitCommitDraft]) {

@@ -227,4 +227,5 @@ fn render_commit_session(
 }
 
 pub(crate) use helpers::{apply_message_template, filtered_extra_args, staged_commit_input};
+pub(crate) use split::SplitDraftFailure;
 pub(crate) use staging::ensure_staged_files;

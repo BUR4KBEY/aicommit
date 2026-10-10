@@ -4,7 +4,7 @@ use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ai::{AiEngine, ChatMessage},
+    ai::{AiEngine, ChatMessage, Generation, GenerationRequest, is_truncation_reason},
     config::{Config, default_api_url_for_provider},
     errors::normalize_provider_error,
     prompt::sanitize_model_output,
@@ -40,6 +40,8 @@ struct AnthropicMessage {
 struct MessagesResponse {
     #[serde(default)]
     content: Vec<ResponseBlock>,
+    #[serde(default)]
+    stop_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,7 +85,7 @@ impl AnthropicEngine {
         }
     }
 
-    fn build_request(&self, messages: &[ChatMessage]) -> MessagesRequest {
+    fn build_request(&self, messages: &[ChatMessage], max_output_tokens: usize) -> MessagesRequest {
         let mut system_messages = Vec::new();
         let mut anthropic_messages = Vec::new();
 
@@ -110,7 +112,7 @@ impl AnthropicEngine {
 
         MessagesRequest {
             model: self.config.model.clone(),
-            max_tokens: self.config.tokens_max_output,
+            max_tokens: max_output_tokens,
             system: (!system_messages.is_empty()).then(|| system_messages.join("\n\n")),
             messages: anthropic_messages,
         }
@@ -120,17 +122,32 @@ impl AnthropicEngine {
 #[async_trait]
 impl AiEngine for AnthropicEngine {
     async fn generate_commit_message(&self, messages: &[ChatMessage]) -> Result<String> {
+        Ok(self
+            .generate_with_options(messages, &GenerationRequest::default())
+            .await?
+            .text)
+    }
+
+    async fn generate_with_options(
+        &self,
+        messages: &[ChatMessage],
+        request: &GenerationRequest,
+    ) -> Result<Generation> {
+        let max_output_tokens = request
+            .max_output_tokens
+            .unwrap_or(self.config.tokens_max_output)
+            .max(1);
         let request_tokens = count_messages(messages);
         if request_tokens
             > self
                 .config
                 .tokens_max_input
-                .saturating_sub(self.config.tokens_max_output)
+                .saturating_sub(max_output_tokens)
         {
             return Err(crate::errors::AicError::TooManyTokens.into());
         }
 
-        let payload = self.build_request(messages);
+        let payload = self.build_request(messages, max_output_tokens);
         let mut request = self
             .client
             .post(self.messages_url())
@@ -168,6 +185,10 @@ impl AiEngine for AnthropicEngine {
 
         let response: MessagesResponse = serde_json::from_str(&body)
             .with_context(|| format!("failed to parse AI response: {body}"))?;
+        let truncated = response
+            .stop_reason
+            .as_deref()
+            .is_some_and(is_truncation_reason);
         let content = response
             .content
             .into_iter()
@@ -184,7 +205,10 @@ impl AiEngine for AnthropicEngine {
             return Err(crate::errors::AicError::EmptyMessage.into());
         }
 
-        Ok(content)
+        Ok(Generation {
+            text: content,
+            truncated,
+        })
     }
 }
 
@@ -210,12 +234,15 @@ mod tests {
             ..Config::default()
         };
         let engine = AnthropicEngine::new(config).unwrap();
-        let payload = engine.build_request(&[
-            ChatMessage::system("system one"),
-            ChatMessage::user("user diff"),
-            ChatMessage::assistant("assistant example"),
-            ChatMessage::system("system two"),
-        ]);
+        let payload = engine.build_request(
+            &[
+                ChatMessage::system("system one"),
+                ChatMessage::user("user diff"),
+                ChatMessage::assistant("assistant example"),
+                ChatMessage::system("system two"),
+            ],
+            64,
+        );
 
         assert_eq!(payload.system.as_deref(), Some("system one\n\nsystem two"));
         assert_eq!(payload.messages.len(), 2);

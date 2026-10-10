@@ -1,6 +1,6 @@
 use aicommit::{
     ai::{
-        AiEngine, ChatMessage, anthropic::AnthropicEngine, engine_from_config,
+        AiEngine, ChatMessage, GenerationRequest, anthropic::AnthropicEngine, engine_from_config,
         openai_compat::OpenAiCompatEngine,
     },
     config::Config,
@@ -221,6 +221,45 @@ async fn anthropic_engine_uses_messages_api_and_flattens_text_blocks() {
         response,
         "feat: add anthropic support\n- wire provider defaults"
     );
+}
+
+#[tokio::test]
+async fn anthropic_engine_reports_cap_truncation_and_honors_a_per_call_cap() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("\"max_tokens\":2048"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "content": [{ "type": "text", "text": "{\"groups\":[" }],
+            "stop_reason": "max_tokens"
+        })))
+        .mount(&server)
+        .await;
+
+    let config = Config {
+        ai_provider: "anthropic".to_owned(),
+        api_key: Some("key".to_owned()),
+        api_url: Some(format!("{}/v1", server.uri())),
+        tokens_max_output: 500,
+        ..Config::default()
+    };
+    let engine = AnthropicEngine::new(config).unwrap();
+    let generation = engine
+        .generate_with_options(
+            &[ChatMessage::user("diff")],
+            &GenerationRequest {
+                max_output_tokens: Some(2048),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(generation.text, "{\"groups\":[");
+    assert!(
+        generation.truncated,
+        "stop_reason max_tokens must surface as truncation"
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]

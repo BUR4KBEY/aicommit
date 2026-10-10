@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use serde::Deserialize;
 
 use crate::{
-    ai::engine_from_config,
+    ai::{AiEngine, ChatMessage, Generation, GenerationRequest, engine_from_config},
     config::Config,
     prompt::{
         SplitPlanGroup, build_split_chunk_summary_messages, build_split_plan_messages,
@@ -16,6 +16,85 @@ use crate::{
 use super::{GenerationProgress, ProgressFn, report};
 
 const TOKEN_ADJUSTMENT: usize = 20;
+
+/// Split plans carry several titles, rationales, and file lists, so they run
+/// longer than a single commit message. `AIC_TOKENS_MAX_OUTPUT` (500 by
+/// default) truncates them mid-JSON, so plan calls keep their own floor.
+const SPLIT_PLAN_MIN_OUTPUT_TOKENS: usize = 4096;
+
+/// Multiplier for the single retry issued when the provider reports it ran
+/// out of output budget mid-plan.
+const SPLIT_PLAN_RETRY_FACTOR: usize = 4;
+
+/// Output cap for one plan call. Never below the structured-artifact floor and
+/// never beyond what the input window can spare; the bumped retry drops to the
+/// same ceiling when the window is too small to grow into.
+fn split_plan_output_cap(config: &Config, prompt_tokens: usize, bumped: bool) -> usize {
+    let headroom = config.tokens_max_input.saturating_sub(prompt_tokens).max(1);
+    let base = config
+        .tokens_max_output
+        .max(SPLIT_PLAN_MIN_OUTPUT_TOKENS)
+        .min(headroom);
+    if bumped {
+        base.saturating_mul(SPLIT_PLAN_RETRY_FACTOR).min(headroom)
+    } else {
+        base
+    }
+}
+
+/// Ask for the plan. When the provider says it stopped on the output cap, ask
+/// once more with a bigger cap before the caller degrades to a single commit;
+/// anything else that fails to parse is a model bug a bigger cap cannot fix.
+async fn request_split_plan(
+    engine: &dyn AiEngine,
+    messages: &[ChatMessage],
+    staged_files: &[String],
+    config: &Config,
+    prompt_tokens: usize,
+) -> Result<Vec<SplitPlanGroup>> {
+    let cap = split_plan_output_cap(config, prompt_tokens, false);
+    let response = request_plan(engine, messages, cap).await?;
+    if !response.truncated {
+        return parse_split_plan_response(&response.text, staged_files);
+    }
+
+    let retry_cap = split_plan_output_cap(config, prompt_tokens, true);
+    if retry_cap > cap {
+        let retry = request_plan(engine, messages, retry_cap).await?;
+        if !retry.truncated {
+            return parse_split_plan_response(&retry.text, staged_files);
+        }
+        return Err(truncated_plan_error(retry_cap, config));
+    }
+
+    Err(truncated_plan_error(cap, config))
+}
+
+async fn request_plan(
+    engine: &dyn AiEngine,
+    messages: &[ChatMessage],
+    cap: usize,
+) -> Result<Generation> {
+    engine
+        .generate_with_options(
+            messages,
+            &GenerationRequest {
+                max_output_tokens: Some(cap),
+            },
+        )
+        .await
+}
+
+/// Concrete cause plus the fix, so a degraded split never surfaces as a bare
+/// `EOF while parsing a string`.
+fn truncated_plan_error(cap: usize, config: &Config) -> anyhow::Error {
+    anyhow::anyhow!(
+        "the split plan response was truncated at the {cap}-token plan cap; \
+         raise AIC_TOKENS_MAX_OUTPUT (currently {}) or AIC_TOKENS_MAX_INPUT ({}) to fit a longer plan",
+        config.tokens_max_output,
+        config.tokens_max_input
+    )
+}
 
 #[derive(Debug, Deserialize)]
 struct SplitPlanResponse {
@@ -44,7 +123,7 @@ pub async fn generate_split_plan(
     )?);
     let max_request_tokens = config
         .tokens_max_input
-        .saturating_sub(config.tokens_max_output)
+        .saturating_sub(split_plan_output_cap(config, prompt_tokens, false))
         .saturating_sub(prompt_tokens)
         .saturating_sub(TOKEN_ADJUSTMENT);
 
@@ -61,8 +140,14 @@ pub async fn generate_split_plan(
             },
         );
         let messages = build_split_plan_messages(config, &chunks[0], context, staged_files)?;
-        let response = engine.generate_commit_message(&messages).await?;
-        return parse_split_plan_response(&response, staged_files);
+        return request_split_plan(
+            engine.as_ref(),
+            &messages,
+            staged_files,
+            config,
+            prompt_tokens,
+        )
+        .await;
     }
 
     let mut partial_summaries = Vec::with_capacity(chunks.len());
@@ -88,8 +173,14 @@ pub async fn generate_split_plan(
     report(progress, GenerationProgress::Synthesizing);
     let synthesis_messages =
         build_split_synthesis_messages(config, &partial_summaries, context, staged_files)?;
-    let response = engine.generate_commit_message(&synthesis_messages).await?;
-    parse_split_plan_response(&response, staged_files)
+    request_split_plan(
+        engine.as_ref(),
+        &synthesis_messages,
+        staged_files,
+        config,
+        prompt_tokens,
+    )
+    .await
 }
 
 fn parse_split_plan_response(input: &str, staged_files: &[String]) -> Result<Vec<SplitPlanGroup>> {

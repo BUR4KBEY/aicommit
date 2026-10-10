@@ -99,7 +99,7 @@ pub fn split_message(message: &str) -> (String, Option<String>) {
 }
 
 /// Map an error to a stable `(code, retryable)` pair.
-/// `attempts` is always 1: aic does not retry provider calls.
+/// `attempts` comes from the error itself when it carries a retry count.
 pub fn error_code(error: &anyhow::Error) -> (String, bool) {
     let error = inner_json_error(error);
     if let Some(aic) = error.downcast_ref::<crate::errors::AicError>() {
@@ -153,6 +153,12 @@ pub fn error_code(error: &anyhow::Error) -> (String, bool) {
     if lower.contains("failed to call ai provider") || lower.contains("failed to parse ai response")
     {
         return ("provider_error".to_owned(), false);
+    }
+    if lower.contains("split plan response was truncated")
+        || lower.contains("message generation failed after")
+        || lower.contains("staged diff read failed after")
+    {
+        return ("split_stage_failed".to_owned(), true);
     }
     if lower.contains("failed to parse split plan")
         || lower.contains("split plan must contain")
@@ -239,6 +245,14 @@ pub fn inner_json_error(error: &anyhow::Error) -> &anyhow::Error {
         None => error,
     }
 }
+
+/// Attempts a failed split stage made before it surfaced, so `--json`
+/// consumers see the real count instead of a hardcoded `1`.
+fn split_draft_attempts(error: &anyhow::Error) -> Option<u32> {
+    inner_json_error(error)
+        .downcast_ref::<crate::commands::commit::SplitDraftFailure>()
+        .map(|failure| failure.attempts)
+}
 pub fn json_error_output(
     command: &str,
     dry_run: bool,
@@ -247,6 +261,7 @@ pub fn json_error_output(
     error: &anyhow::Error,
 ) -> JsonOutput {
     let (code, retryable) = error_code(error);
+    let attempts = split_draft_attempts(error).unwrap_or(1);
     JsonOutput {
         command: command.to_owned(),
         dry_run,
@@ -259,7 +274,7 @@ pub fn json_error_output(
             code,
             message: error.to_string(),
             retryable,
-            attempts: 1,
+            attempts,
         }),
     }
 }

@@ -1,15 +1,14 @@
-use anyhow::{Context, Result};
-use async_trait::async_trait;
-use reqwest::{Client, Proxy};
-use serde::{Deserialize, Serialize};
-
 use crate::{
-    ai::{AiEngine, ChatMessage},
+    ai::{AiEngine, ChatMessage, Generation, GenerationRequest, is_truncation_reason},
     config::{Config, default_api_url_for_provider},
     errors::normalize_provider_error,
     prompt::sanitize_model_output,
     token::count_messages,
 };
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use reqwest::{Client, Proxy};
+use serde::{Deserialize, Serialize};
 
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 
@@ -42,6 +41,8 @@ struct ChatResponse {
 #[derive(Debug, Deserialize)]
 struct Choice {
     message: ResponseMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,12 +103,27 @@ impl OpenAiCompatEngine {
 #[async_trait]
 impl AiEngine for OpenAiCompatEngine {
     async fn generate_commit_message(&self, messages: &[ChatMessage]) -> Result<String> {
+        Ok(self
+            .generate_with_options(messages, &GenerationRequest::default())
+            .await?
+            .text)
+    }
+
+    async fn generate_with_options(
+        &self,
+        messages: &[ChatMessage],
+        request: &GenerationRequest,
+    ) -> Result<Generation> {
+        let max_output_tokens = request
+            .max_output_tokens
+            .unwrap_or(self.config.tokens_max_output)
+            .max(1);
         let request_tokens = count_messages(messages);
         if request_tokens
             > self
                 .config
                 .tokens_max_input
-                .saturating_sub(self.config.tokens_max_output)
+                .saturating_sub(max_output_tokens)
         {
             return Err(crate::errors::AicError::TooManyTokens.into());
         }
@@ -122,8 +138,8 @@ impl AiEngine for OpenAiCompatEngine {
             messages,
             temperature: (!is_reasoning_model).then_some(0.0),
             top_p: (!is_reasoning_model).then_some(0.1),
-            max_tokens: (!is_reasoning_model).then_some(self.config.tokens_max_output),
-            max_completion_tokens: is_reasoning_model.then_some(self.config.tokens_max_output),
+            max_tokens: (!is_reasoning_model).then_some(max_output_tokens),
+            max_completion_tokens: is_reasoning_model.then_some(max_output_tokens),
         };
 
         let mut request = self.client.post(self.chat_url()).json(&payload);
@@ -166,15 +182,25 @@ impl AiEngine for OpenAiCompatEngine {
 
         let response: ChatResponse = serde_json::from_str(&body)
             .with_context(|| format!("failed to parse AI response: {body}"))?;
-        let content = response
+        let choice = response
             .choices
             .first()
-            .and_then(|choice| choice.message.content.as_deref())
+            .ok_or(crate::errors::AicError::EmptyMessage)?;
+        let content = choice
+            .message
+            .content
+            .as_deref()
             .map(sanitize_model_output)
             .filter(|content| !content.is_empty())
             .ok_or(crate::errors::AicError::EmptyMessage)?;
 
-        Ok(content)
+        Ok(Generation {
+            text: content,
+            truncated: choice
+                .finish_reason
+                .as_deref()
+                .is_some_and(is_truncation_reason),
+        })
     }
 }
 

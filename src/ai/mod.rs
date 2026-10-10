@@ -40,11 +40,50 @@ impl ChatMessage {
     }
 }
 
+/// Per-call overrides for a single generation request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GenerationRequest {
+    /// Output-token cap for this call. `None` uses `AIC_TOKENS_MAX_OUTPUT`,
+    /// which is sized for one commit message; structured multi-artifact
+    /// requests (split plans) raise it past that cap.
+    pub max_output_tokens: Option<usize>,
+}
+
+/// One model response plus the stop signal, so callers can tell "the model
+/// finished" from "the provider ran out of output budget".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Generation {
+    pub text: String,
+    /// True when the provider stopped because it hit the output-token cap.
+    pub truncated: bool,
+}
+
+/// True for provider stop reasons that mean "output cap reached".
+pub fn is_truncation_reason(reason: &str) -> bool {
+    matches!(
+        reason.trim().to_ascii_lowercase().as_str(),
+        "length" | "max_tokens"
+    )
+}
+
 #[async_trait]
 pub trait AiEngine: Send + Sync {
     /// Send chat messages and return the model's text response.
     /// Used for commit generation, review, and any other text completion task.
     async fn generate_commit_message(&self, messages: &[ChatMessage]) -> Result<String>;
+
+    /// Same call with a per-call output cap and the provider stop signal.
+    /// Engines that cannot observe the stop signal report `truncated: false`.
+    async fn generate_with_options(
+        &self,
+        messages: &[ChatMessage],
+        _request: &GenerationRequest,
+    ) -> Result<Generation> {
+        Ok(Generation {
+            text: self.generate_commit_message(messages).await?,
+            truncated: false,
+        })
+    }
 }
 
 pub fn engine_from_config(config: &Config) -> Result<Box<dyn AiEngine>> {
