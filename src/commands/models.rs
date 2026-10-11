@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{
-        Config, default_api_url_for_provider, global_model_cache_path, is_local_cli_provider,
-        model_list, supported_providers,
+        Config, ConfigOverrides, default_api_url_for_provider, global_model_cache_path,
+        is_local_cli_provider, model_list, supported_providers,
     },
     ui,
 };
@@ -28,8 +28,8 @@ fn cli_auth_note(binary: &str) -> String {
     format!("Uses the installed {binary} CLI from PATH with its existing authentication.")
 }
 
-pub async fn run(provider_override: Option<String>, refresh: bool) -> Result<()> {
-    let config = Config::load_with_provider_override(provider_override.as_deref())?;
+pub async fn run(overrides: ConfigOverrides, refresh: bool) -> Result<()> {
+    let config = Config::load_with_overrides(&overrides)?;
     let provider = config.ai_provider.clone();
     if !supported_providers().contains(&provider.as_str()) {
         bail!(

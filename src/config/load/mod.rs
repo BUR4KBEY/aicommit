@@ -3,7 +3,7 @@ use std::env;
 use anyhow::Result;
 
 use super::{
-    Config, ConfigPaths,
+    Config, ConfigOverrides, ConfigPaths,
     model::{default_model_for_provider, is_local_cli_provider, provider_max_tokens_input},
     validate::validate_config,
 };
@@ -12,15 +12,23 @@ mod apply;
 
 pub use apply::{apply_file, apply_process_env, apply_toml_item, apply_value, optional_string};
 
-pub fn load_from_with_provider_override(
+pub fn load_from_with_overrides(
     paths: &ConfigPaths,
-    provider_override: Option<&str>,
+    overrides: &ConfigOverrides,
 ) -> Result<Config> {
-    let mut config = Config::default();
+    // Model stays empty until a layer sets AIC_MODEL, so an unset model
+    // follows the resolved provider instead of the openai default.
+    let mut config = Config {
+        model: String::new(),
+        ..Config::default()
+    };
     apply_file(&mut config, &paths.global)?;
     apply_process_env(&mut config)?;
+    if config.model.is_empty() {
+        config.model = default_model_for_provider(&config.ai_provider).to_owned();
+    }
 
-    if let Some(provider) = provider_override {
+    if let Some(provider) = overrides.provider.as_deref() {
         let previous_provider = config.ai_provider.clone();
         let previous_model = config.model.clone();
         apply_value(&mut config, "AIC_AI_PROVIDER", provider)?;
@@ -29,6 +37,10 @@ pub fn load_from_with_provider_override(
         {
             config.model = default_model_for_provider(&config.ai_provider).to_owned();
         }
+    }
+
+    if let Some(model) = overrides.model.as_deref() {
+        config.model = model.to_owned();
     }
 
     if let Some(limit) = provider_max_tokens_input(&config.ai_provider) {
@@ -47,11 +59,22 @@ pub fn load_from_with_provider_override(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use tempfile::TempDir;
 
     use crate::config::{
-        Config, ConfigPaths, model::provider_needs_api_key, write::set_global_config,
+        Config, ConfigOverrides, ConfigPaths, model::provider_needs_api_key,
+        write::set_global_config,
     };
+
+    fn load_with(global: PathBuf, provider: Option<&str>, model: Option<&str>) -> Config {
+        let overrides = ConfigOverrides {
+            provider: provider.map(str::to_owned),
+            model: model.map(str::to_owned),
+        };
+        Config::load_from_with_overrides(&ConfigPaths { global }, &overrides).unwrap()
+    }
 
     #[test]
     fn load_from_ignores_neighbor_dotenv_file() {
@@ -154,9 +177,7 @@ mod tests {
         )
         .unwrap();
 
-        let config =
-            Config::load_from_with_provider_override(&ConfigPaths { global }, Some("ollama"))
-                .unwrap();
+        let config = load_with(global, Some("ollama"), None);
 
         assert_eq!(config.ai_provider, "ollama");
         assert_eq!(config.model, "llama3.2");
@@ -172,9 +193,7 @@ mod tests {
         )
         .unwrap();
 
-        let config =
-            Config::load_from_with_provider_override(&ConfigPaths { global }, Some("codex"))
-                .unwrap();
+        let config = load_with(global, Some("codex"), None);
 
         assert_eq!(config.ai_provider, "codex");
         assert_eq!(config.model, "default");
@@ -190,9 +209,7 @@ mod tests {
         )
         .unwrap();
 
-        let config =
-            Config::load_from_with_provider_override(&ConfigPaths { global }, Some("copilot"))
-                .unwrap();
+        let config = load_with(global, Some("copilot"), None);
 
         assert_eq!(config.ai_provider, "copilot");
         assert_eq!(config.model, "default");
@@ -208,9 +225,7 @@ mod tests {
         )
         .unwrap();
 
-        let config =
-            Config::load_from_with_provider_override(&ConfigPaths { global }, Some("anthropic"))
-                .unwrap();
+        let config = load_with(global, Some("anthropic"), None);
 
         assert_eq!(config.ai_provider, "anthropic");
         assert_eq!(config.model, "claude-sonnet-4-20250514");
@@ -226,9 +241,7 @@ mod tests {
         )
         .unwrap();
 
-        let config =
-            Config::load_from_with_provider_override(&ConfigPaths { global }, Some("groq"))
-                .unwrap();
+        let config = load_with(global, Some("groq"), None);
 
         assert_eq!(config.ai_provider, "groq");
         assert_eq!(config.model, "gpt-5.4");
@@ -271,11 +284,55 @@ mod tests {
         )
         .unwrap();
 
-        let config =
-            Config::load_from_with_provider_override(&ConfigPaths { global }, Some("apple"))
-                .unwrap();
+        let config = load_with(global, Some("apple"), None);
 
         assert_eq!(config.ai_provider, "apple");
         assert_eq!(config.tokens_max_input, 4_000);
+    }
+
+    #[test]
+    fn model_override_wins_over_file_model_and_provider_override() {
+        let temp = TempDir::new().unwrap();
+        let global = temp.path().join(".aicommit");
+        std::fs::write(
+            &global,
+            "AIC_AI_PROVIDER = \"openai\"\nAIC_MODEL = \"gpt-5.4\"\n",
+        )
+        .unwrap();
+
+        let config = load_with(global.clone(), None, Some("chosen"));
+        assert_eq!(config.ai_provider, "openai");
+        assert_eq!(config.model, "chosen");
+
+        let config = load_with(global, Some("anthropic"), Some("chosen"));
+        assert_eq!(config.ai_provider, "anthropic");
+        assert_eq!(config.model, "chosen");
+    }
+
+    #[test]
+    fn provider_without_model_uses_provider_default_model() {
+        let temp = TempDir::new().unwrap();
+        let global = temp.path().join(".aicommit");
+        std::fs::write(&global, "AIC_AI_PROVIDER = \"opencode-go\"\n").unwrap();
+
+        let config = load_with(global, None, None);
+
+        assert_eq!(config.ai_provider, "opencode-go");
+        assert_eq!(config.model, "glm-5.3-flash");
+    }
+
+    #[test]
+    fn explicit_model_matching_openai_default_is_kept_for_other_provider() {
+        let temp = TempDir::new().unwrap();
+        let global = temp.path().join(".aicommit");
+        std::fs::write(
+            &global,
+            "AIC_AI_PROVIDER = \"opencode-go\"\nAIC_MODEL = \"gpt-5.4-mini\"\n",
+        )
+        .unwrap();
+
+        let config = load_with(global, None, None);
+
+        assert_eq!(config.model, "gpt-5.4-mini");
     }
 }

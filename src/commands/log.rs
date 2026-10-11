@@ -1,14 +1,14 @@
 use anyhow::{Result, bail};
 
-use crate::{config::Config, errors::AicError, generator, git, ui};
+use crate::{
+    config::{Config, ConfigOverrides},
+    errors::AicError,
+    generator, git, ui,
+};
 
-pub async fn run(
-    count: usize,
-    skip_confirmation: bool,
-    provider_override: Option<String>,
-) -> Result<()> {
+pub async fn run(count: usize, skip_confirmation: bool, overrides: ConfigOverrides) -> Result<()> {
     git::assert_git_repo()?;
-    let config = Config::load_with_provider_override(provider_override.as_deref())?;
+    let config = Config::load_with_overrides(&overrides)?;
 
     if config.provider_needs_api_key() && config.api_key.is_none() {
         bail!(AicError::MissingApiKey(config.ai_provider));

@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 
 use crate::{
     ai::engine_from_config,
-    config::Config,
+    config::{Config, ConfigOverrides},
     errors::AicError,
     git, history_store,
     output::{OutputMode, emit_json, json_error_output, mark_json_error_emitted},
@@ -13,16 +13,12 @@ use crate::{
 
 const TOKEN_ADJUSTMENT: usize = 20;
 
-pub async fn run(
-    context: String,
-    provider_override: Option<String>,
-    output: OutputMode,
-) -> Result<()> {
+pub async fn run(context: String, overrides: ConfigOverrides, output: OutputMode) -> Result<()> {
     if output.is_machine() {
-        return run_machine(context, provider_override, output).await;
+        return run_machine(context, overrides, output).await;
     }
     git::assert_git_repo()?;
-    let config = Config::load_with_provider_override(provider_override.as_deref())?;
+    let config = Config::load_with_overrides(&overrides)?;
 
     if config.provider_needs_api_key() && config.api_key.is_none() {
         bail!(AicError::MissingApiKey(config.ai_provider));
@@ -111,10 +107,10 @@ pub async fn run(
 }
 async fn run_machine(
     context: String,
-    provider_override: Option<String>,
+    overrides: ConfigOverrides,
     output: OutputMode,
 ) -> Result<()> {
-    match run_machine_inner(&context, provider_override.as_deref()).await {
+    match run_machine_inner(&context, &overrides).await {
         Ok((config, review, files)) => {
             if output.is_json() {
                 use crate::output::JsonOutput;
@@ -136,14 +132,15 @@ async fn run_machine(
         }
         Err(error) => {
             if output.is_json() {
-                let (provider, model) =
-                    match Config::load_with_provider_override(provider_override.as_deref()) {
-                        Ok(config) => (config.ai_provider, config.model),
-                        Err(_) => (
-                            provider_override.unwrap_or_else(|| Config::default().ai_provider),
-                            Config::default().model,
-                        ),
-                    };
+                let (provider, model) = match Config::load_with_overrides(&overrides) {
+                    Ok(config) => (config.ai_provider, config.model),
+                    Err(_) => (
+                        overrides
+                            .provider
+                            .unwrap_or_else(|| Config::default().ai_provider),
+                        overrides.model.unwrap_or_else(|| Config::default().model),
+                    ),
+                };
                 emit_json(&json_error_output(
                     "review", false, &provider, &model, &error,
                 ));
@@ -156,10 +153,10 @@ async fn run_machine(
 
 async fn run_machine_inner(
     context: &str,
-    provider_override: Option<&str>,
+    overrides: &ConfigOverrides,
 ) -> Result<(Config, String, Vec<String>)> {
     git::assert_git_repo()?;
-    let config = Config::load_with_provider_override(provider_override)?;
+    let config = Config::load_with_overrides(overrides)?;
 
     if config.provider_needs_api_key() && config.api_key.is_none() {
         bail!(AicError::MissingApiKey(config.ai_provider));

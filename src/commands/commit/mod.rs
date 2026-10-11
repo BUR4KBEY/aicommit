@@ -1,8 +1,13 @@
 use anyhow::{Result, bail};
 
 use crate::{
-    cli::SplitMode, config::Config, errors::AicError, git, output::OutputMode,
-    prompt::detect_scope_hints, ui,
+    cli::SplitMode,
+    config::{Config, ConfigOverrides},
+    errors::AicError,
+    git,
+    output::OutputMode,
+    prompt::detect_scope_hints,
+    ui,
 };
 
 use self::{
@@ -27,7 +32,7 @@ pub async fn run(
     skip_confirmation: bool,
     dry_run: bool,
     amend: bool,
-    provider_override: Option<String>,
+    overrides: ConfigOverrides,
     split: SplitMode,
     output: OutputMode,
 ) -> Result<()> {
@@ -39,14 +44,14 @@ pub async fn run(
             skip_confirmation,
             dry_run,
             amend,
-            provider_override,
+            overrides,
             split,
             output,
         )
         .await;
     }
     git::assert_git_repo()?;
-    let config = Config::load_with_provider_override(provider_override.as_deref())?;
+    let config = Config::load_with_overrides(&overrides)?;
 
     if config.provider_needs_api_key() && config.api_key.is_none() {
         bail!(AicError::MissingApiKey(config.ai_provider));

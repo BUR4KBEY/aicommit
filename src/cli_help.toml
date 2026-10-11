@@ -4,6 +4,9 @@ about = "AI-assisted Git commit messages"
 [root.args.provider]
 help = "Override the configured AI provider for this run"
 
+[root.args.model]
+help = "Override the configured AI model for this run"
+
 [root.args.full_gitmoji_spec]
 help = "Use the full GitMoji prompt"
 

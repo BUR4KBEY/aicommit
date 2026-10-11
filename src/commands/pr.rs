@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 
 use crate::{
-    config::Config,
+    config::{Config, ConfigOverrides},
     errors::AicError,
     generator, git,
     history_store::{self, HistoryEntry},
@@ -15,11 +15,11 @@ pub async fn run(
     context: String,
     base: Option<String>,
     skip_confirmation: bool,
-    provider_override: Option<String>,
+    overrides: ConfigOverrides,
     output: OutputMode,
 ) -> Result<()> {
     git::assert_git_repo()?;
-    let config = Config::load_with_provider_override(provider_override.as_deref())?;
+    let config = Config::load_with_overrides(&overrides)?;
 
     if config.provider_needs_api_key() && config.api_key.is_none() {
         bail!(AicError::MissingApiKey(config.ai_provider));
@@ -50,7 +50,6 @@ pub async fn run(
             &commits,
             &changed_files,
             &diff,
-            provider_override.as_deref(),
             output,
         )
         .await;
@@ -178,7 +177,6 @@ async fn run_machine(
     commits: &[git::CommitInfo],
     changed_files: &[String],
     diff: &str,
-    provider_override: Option<&str>,
     output: OutputMode,
 ) -> Result<()> {
     let draft = generator::generate_pull_request(
@@ -263,9 +261,6 @@ async fn run_machine(
         }
         Err(error) => {
             if output.is_json() {
-                // Config already resolved by caller; override only matters if
-                // this error came from config load (it cannot here).
-                let _ = provider_override;
                 emit_json(&json_error_output(
                     "pr",
                     false,

@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 
 use crate::{
     cli::SplitMode,
-    config::Config,
+    config::{Config, ConfigOverrides},
     errors::AicError,
     generator, git,
     output::{
@@ -32,17 +32,21 @@ pub(super) async fn run_machine(
     skip_confirmation: bool,
     dry_run: bool,
     amend: bool,
-    provider_override: Option<String>,
+    overrides: ConfigOverrides,
     split: SplitMode,
     output: OutputMode,
 ) -> Result<()> {
     // Resolve provider/model for JSON errors. Config load itself can fail;
     // fall back to override/default then. Note: AIC_MODEL env / config file
     // can change the model; resolved in run_machine_inner on success paths.
-    let fallback_provider = provider_override
+    let fallback_provider = overrides
+        .provider
         .clone()
         .unwrap_or_else(|| Config::default().ai_provider);
-    let fallback_model = Config::default().model;
+    let fallback_model = overrides
+        .model
+        .clone()
+        .unwrap_or_else(|| Config::default().model);
 
     let outcome = run_machine_inner(
         extra_args,
@@ -51,7 +55,7 @@ pub(super) async fn run_machine(
         skip_confirmation,
         dry_run,
         amend,
-        provider_override.as_deref(),
+        &overrides,
         split,
         output,
     )
@@ -127,7 +131,7 @@ pub(super) async fn run_machine(
                 // Best-effort: re-resolve config for accurate provider/model
                 // in the error envelope (cheap, no network).
                 let (provider, model) =
-                    match Config::load_with_provider_override(provider_override.as_deref()) {
+                    match Config::load_with_overrides(&overrides) {
                         Ok(config) => (config.ai_provider, config.model),
                         Err(_) => (fallback_provider, fallback_model),
                     };
@@ -149,12 +153,12 @@ async fn run_machine_inner(
     skip_confirmation: bool,
     dry_run: bool,
     amend: bool,
-    provider_override: Option<&str>,
+    overrides: &ConfigOverrides,
     split: SplitMode,
     output: OutputMode,
 ) -> Result<JsonOutput> {
     git::assert_git_repo()?;
-    let config = Config::load_with_provider_override(provider_override)?;
+    let config = Config::load_with_overrides(overrides)?;
 
     if config.provider_needs_api_key() && config.api_key.is_none() {
         bail!(AicError::MissingApiKey(config.ai_provider));

@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_complete::Shell;
 
-use crate::{commands, output::OutputMode};
+use crate::{commands, config::ConfigOverrides, output::OutputMode};
 
 /// Non-interactive split-commit mode for the default commit flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
@@ -22,6 +22,9 @@ pub struct Cli {
 
     #[arg(short = 'p', long, global = true)]
     provider: Option<String>,
+
+    #[arg(long, global = true, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    model: Option<String>,
 
     #[arg(long = "fgm")]
     full_gitmoji_spec: bool,
@@ -230,6 +233,10 @@ pub async fn run() -> Result<()> {
 
     let output = OutputMode::from_flags(cli.json, cli.quiet)?;
     crate::ui::set_output_mode(output);
+    let overrides = ConfigOverrides {
+        provider: cli.provider,
+        model: cli.model,
+    };
 
     match cli.command {
         Some(Command::Config(command)) => match command.mode {
@@ -238,9 +245,7 @@ pub async fn run() -> Result<()> {
             ConfigMode::Describe { keys } => commands::config::describe(keys),
         },
         Some(Command::Setup) => commands::setup::run().await,
-        Some(Command::Models(command)) => {
-            commands::models::run(cli.provider, command.refresh).await
-        }
+        Some(Command::Models(command)) => commands::models::run(overrides, command.refresh).await,
         Some(Command::Hook(command)) => match command.mode {
             HookMode::Set => commands::hook::set(),
             HookMode::Unset => commands::hook::unset(),
@@ -253,14 +258,14 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Some(Command::Review(command)) => {
-            commands::review::run(command.context, cli.provider, output).await
+            commands::review::run(command.context, overrides, output).await
         }
         Some(Command::Pr(command)) => {
             commands::pr::run(
                 command.context,
                 command.base,
                 command.yes,
-                cli.provider,
+                overrides,
                 output,
             )
             .await
@@ -274,7 +279,7 @@ pub async fn run() -> Result<()> {
             command.non_interactive,
         ),
         Some(Command::Log(command)) => {
-            commands::log::run(command.count, command.yes, cli.provider).await
+            commands::log::run(command.count, command.yes, overrides).await
         }
         Some(Command::Map(command)) => match command.mode {
             MapMode::Tree(sub) => {
@@ -298,7 +303,7 @@ pub async fn run() -> Result<()> {
                 cli.yes,
                 cli.dry_run,
                 cli.amend,
-                cli.provider,
+                overrides,
                 cli.split,
                 output,
             )

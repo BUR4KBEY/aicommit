@@ -1765,6 +1765,47 @@ fn split_plan_ignores_the_commit_output_cap_and_bumps_it_after_truncation() {
 }
 
 #[test]
+fn model_flag_overrides_env_model_in_provider_request() {
+    let repo = init_repo();
+    fs::write(repo.path().join("src.txt"), "hello\n").unwrap();
+    run_git(repo.path(), ["add", "src.txt"]);
+
+    let request_model = |args: &[&str]| {
+        let (api_url, log) =
+            spawn_mock_provider(|_| (200, chat_reply("feat: add src", Some("stop"))));
+        let output = Command::cargo_bin("aic")
+            .unwrap()
+            .current_dir(repo.path())
+            .env("AIC_AI_PROVIDER", "openai")
+            .env("AIC_API_KEY", "test-key")
+            .env("AIC_API_URL", &api_url)
+            .env("AIC_MODEL", "other")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bodies = recorded_bodies(log);
+        let request: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+        request["model"].as_str().unwrap().to_owned()
+    };
+
+    assert_eq!(request_model(&["--dry-run", "--model", "chosen"]), "chosen");
+    assert_eq!(request_model(&["--dry-run"]), "other");
+}
+
+#[test]
+fn model_flag_rejects_empty_value() {
+    let repo = init_repo();
+    let output = run_aic(repo.path(), &["--dry-run", "--model", ""]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--model"));
+}
+
+#[test]
 fn truncated_split_plan_names_the_cause_and_the_fix() {
     let repo = init_repo();
     stage_two_heterogeneous_files(repo.path());

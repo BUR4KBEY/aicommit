@@ -80,6 +80,14 @@ pub struct ConfigPaths {
     pub global: PathBuf,
 }
 
+/// Per-invocation CLI overrides (`-p/--provider`, `--model`), applied on top
+/// of the config file and process environment.
+#[derive(Debug, Clone, Default)]
+pub struct ConfigOverrides {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -122,22 +130,22 @@ impl ConfigPaths {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        Self::load_from_with_provider_override(&ConfigPaths::discover()?, None)
+        Self::load_from_with_overrides(&ConfigPaths::discover()?, &ConfigOverrides::default())
     }
 
-    pub fn load_with_provider_override(provider_override: Option<&str>) -> Result<Self> {
-        Self::load_from_with_provider_override(&ConfigPaths::discover()?, provider_override)
+    pub fn load_with_overrides(overrides: &ConfigOverrides) -> Result<Self> {
+        Self::load_from_with_overrides(&ConfigPaths::discover()?, overrides)
     }
 
     pub fn load_from(paths: &ConfigPaths) -> Result<Self> {
-        Self::load_from_with_provider_override(paths, None)
+        Self::load_from_with_overrides(paths, &ConfigOverrides::default())
     }
 
-    pub fn load_from_with_provider_override(
+    pub fn load_from_with_overrides(
         paths: &ConfigPaths,
-        provider_override: Option<&str>,
+        overrides: &ConfigOverrides,
     ) -> Result<Self> {
-        load::load_from_with_provider_override(paths, provider_override)
+        load::load_from_with_overrides(paths, overrides)
     }
 
     pub fn as_key_values(&self) -> Vec<(&'static str, String)> {
