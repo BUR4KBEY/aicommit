@@ -13,7 +13,7 @@ use aicommit::{
 };
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{body_string_contains, header, header_exists, method, path},
+    matchers::{body_partial_json, body_string_contains, header, header_exists, method, path},
 };
 
 #[tokio::test]
@@ -405,9 +405,12 @@ async fn anthropic_engine_sends_oauth_tokens_as_bearer_with_claude_code_identity
         .and(header("anthropic-beta", "oauth-2025-04-20"))
         .and(header("anthropic-version", "2023-06-01"))
         .and(|request: &wiremock::Request| !request.headers.contains_key("x-api-key"))
-        .and(body_string_contains(
-            "\"system\":\"You are Claude Code, Anthropic's official CLI for Claude.\\n\\nsystem rules\"",
-        ))
+        .and(body_partial_json(serde_json::json!({
+            "system": [
+                { "type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude." },
+                { "type": "text", "text": "system rules\n\nreview context" }
+            ]
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "content": [{ "type": "text", "text": "feat: support oauth tokens" }]
         })))
@@ -426,6 +429,7 @@ async fn anthropic_engine_sends_oauth_tokens_as_bearer_with_claude_code_identity
         .generate_commit_message(&[
             ChatMessage::system("system rules"),
             ChatMessage::user("diff"),
+            ChatMessage::system("review context"),
         ])
         .await
         .unwrap();

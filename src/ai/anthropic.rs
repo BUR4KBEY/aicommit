@@ -16,7 +16,8 @@ const CONNECT_TIMEOUT_SECS: u64 = 10;
 /// Claude subscription OAuth tokens; Anthropic only accepts them as Bearer auth.
 const OAUTH_TOKEN_PREFIX: &str = "sk-ant-oat";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
-/// Messages sent with an OAuth token are rejected unless the system prompt starts with this.
+/// Messages sent with an OAuth token are rejected (as a misleading 429) unless one `system`
+/// text block is exactly this line, so it is sent as its own block, never joined with the prompt.
 const OAUTH_SYSTEM_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 fn is_oauth_token(api_key: &str) -> bool {
@@ -47,8 +48,31 @@ struct MessagesRequest {
     model: String,
     max_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<SystemPrompt>,
     messages: Vec<AnthropicMessage>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+enum SystemPrompt {
+    Text(String),
+    Blocks(Vec<SystemBlock>),
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+struct SystemBlock {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: String,
+}
+
+impl SystemBlock {
+    fn text(text: impl Into<String>) -> Self {
+        Self {
+            kind: "text",
+            text: text.into(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -110,10 +134,6 @@ impl AnthropicEngine {
         let mut system_messages = Vec::new();
         let mut anthropic_messages = Vec::new();
 
-        if self.config.api_key.as_deref().is_some_and(is_oauth_token) {
-            system_messages.push(OAUTH_SYSTEM_IDENTITY.to_owned());
-        }
-
         for message in messages {
             match message.role.as_str() {
                 "system" => system_messages.push(message.content.clone()),
@@ -135,10 +155,19 @@ impl AnthropicEngine {
             });
         }
 
+        let system = (!system_messages.is_empty()).then(|| system_messages.join("\n\n"));
+        let system = if self.config.api_key.as_deref().is_some_and(is_oauth_token) {
+            let mut blocks = vec![SystemBlock::text(OAUTH_SYSTEM_IDENTITY)];
+            blocks.extend(system.map(SystemBlock::text));
+            Some(SystemPrompt::Blocks(blocks))
+        } else {
+            system.map(SystemPrompt::Text)
+        };
+
         MessagesRequest {
             model: self.config.model.clone(),
             max_tokens: max_output_tokens,
-            system: (!system_messages.is_empty()).then(|| system_messages.join("\n\n")),
+            system,
             messages: anthropic_messages,
         }
     }
@@ -267,7 +296,10 @@ mod tests {
             64,
         );
 
-        assert_eq!(payload.system.as_deref(), Some("system one\n\nsystem two"));
+        assert_eq!(
+            payload.system,
+            Some(SystemPrompt::Text("system one\n\nsystem two".to_owned()))
+        );
         assert_eq!(payload.messages.len(), 2);
         assert_eq!(payload.messages[0].role, "user");
         assert_eq!(payload.messages[1].role, "assistant");

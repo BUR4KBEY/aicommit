@@ -45,5 +45,5 @@
 ## Anthropic OAuth Tokens
 
 - The `anthropic` provider now accepts Claude subscription OAuth tokens (`sk-ant-oat…`) in `AIC_API_KEY`. Previously they failed with `authentication failed for provider 'anthropic'`, because `aic` always sent the key as `x-api-key`.
-- With an OAuth token, `aic` sends `Authorization: Bearer <token>` plus `anthropic-beta: oauth-2025-04-20`, and starts the system prompt with `You are Claude Code, Anthropic's official CLI for Claude.` (Anthropic rejects OAuth-token messages without it). `aic models --provider anthropic` uses the same auth. Console API keys (`sk-ant-api…`) keep the `x-api-key` path.
+- With an OAuth token, `aic` sends `Authorization: Bearer <token>` plus `anthropic-beta: oauth-2025-04-20`. It also sends `system` as two text blocks, the first exactly `You are Claude Code, Anthropic's official CLI for Claude.` and the second the `aic` prompt. Anthropic rejects OAuth-token messages unless one block is exactly that line, and answers a merged prompt with a misleading `429` (`rate limit exceeded`). `aic models --provider anthropic` uses the same auth. Console API keys (`sk-ant-api…`) keep the `x-api-key` path and a plain-string `system`.
 - Caveat: subscription OAuth tokens appear to be meant for Anthropic's own clients; this may conflict with Anthropic's terms and can be blocked at any time. Prefer a Console API key.

@@ -88,7 +88,7 @@ aic config set AIC_AI_PROVIDER=anthropic AIC_API_KEY=<key> AIC_MODEL=claude-sonn
 
 Anthropic defaults to `https://api.anthropic.com/v1`. Override `AIC_API_URL` only if you need a proxy or gateway in front of the Anthropic API.
 
-`AIC_API_KEY` also accepts a Claude subscription OAuth token (`sk-ant-oat…`). For these tokens `aic` sends `Authorization: Bearer <token>` with `anthropic-beta: oauth-2025-04-20` instead of `x-api-key`, and starts the system prompt with `You are Claude Code, Anthropic's official CLI for Claude.`, which Anthropic requires before it accepts messages from an OAuth token. `aic models --provider anthropic` uses the same auth. Console API keys (`sk-ant-api…`) are unchanged.
+`AIC_API_KEY` also accepts a Claude subscription OAuth token (`sk-ant-oat…`). For these tokens `aic` sends `Authorization: Bearer <token>` with `anthropic-beta: oauth-2025-04-20` instead of `x-api-key`. It also sends `system` as two text blocks: the first is exactly `You are Claude Code, Anthropic's official CLI for Claude.` and the second is the `aic` prompt. Anthropic accepts messages from an OAuth token only when one `system` block is exactly that line. If the line is merged into the prompt, Anthropic rejects the request with a misleading `429`, which `aic` reports as `rate limit exceeded`. `aic models --provider anthropic` uses the same auth. Console API keys (`sk-ant-api…`) are unchanged and send `system` as a plain string.
 
 Caveat: subscription OAuth tokens appear to be meant for Anthropic's own clients, so using one this way may conflict with Anthropic's terms and can stop working at any time. A Console API key avoids this.
 
