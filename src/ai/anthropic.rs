@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use reqwest::{Client, Proxy};
+use reqwest::{Client, Proxy, RequestBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -13,6 +13,27 @@ use crate::{
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const CONNECT_TIMEOUT_SECS: u64 = 10;
+/// Claude subscription OAuth tokens; Anthropic only accepts them as Bearer auth.
+const OAUTH_TOKEN_PREFIX: &str = "sk-ant-oat";
+const OAUTH_BETA: &str = "oauth-2025-04-20";
+/// Messages sent with an OAuth token are rejected unless the system prompt starts with this.
+const OAUTH_SYSTEM_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+fn is_oauth_token(api_key: &str) -> bool {
+    api_key.starts_with(OAUTH_TOKEN_PREFIX)
+}
+
+/// Attaches Anthropic credentials: OAuth tokens as `Authorization: Bearer` plus the
+/// OAuth beta header, every other key as `x-api-key`.
+pub(crate) fn with_auth(request: RequestBuilder, api_key: &str) -> RequestBuilder {
+    if is_oauth_token(api_key) {
+        request
+            .bearer_auth(api_key)
+            .header("anthropic-beta", OAUTH_BETA)
+    } else {
+        request.header("x-api-key", api_key)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AnthropicEngine {
@@ -89,6 +110,10 @@ impl AnthropicEngine {
         let mut system_messages = Vec::new();
         let mut anthropic_messages = Vec::new();
 
+        if self.config.api_key.as_deref().is_some_and(is_oauth_token) {
+            system_messages.push(OAUTH_SYSTEM_IDENTITY.to_owned());
+        }
+
         for message in messages {
             match message.role.as_str() {
                 "system" => system_messages.push(message.content.clone()),
@@ -148,10 +173,8 @@ impl AiEngine for AnthropicEngine {
         }
 
         let payload = self.build_request(messages, max_output_tokens);
-        let mut request = self
-            .client
-            .post(self.messages_url())
-            .header("x-api-key", self.config.api_key.clone().unwrap_or_default())
+        let request = self.client.post(self.messages_url());
+        let mut request = with_auth(request, self.config.api_key.as_deref().unwrap_or_default())
             .header("anthropic-version", ANTHROPIC_VERSION)
             .json(&payload);
 

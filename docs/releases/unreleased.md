@@ -41,3 +41,9 @@
 - The id is per-process on purpose: a fixed id lets the gateway serve stale cached responses for repeated prompts, which shows up as `AI provider returned an empty response` on identical back-to-back runs. Back-to-back `aic` invocations therefore always use fresh ids.
 - The header is also added when `AIC_API_URL` points at `opencode.ai/zen/go` under any provider id, so existing `openai` + `AIC_API_URL` setups get it too. It is deliberately scoped to the Go path: the sibling OpenCode Zen gateway (`/zen/v1`) is a separate pay-per-token product and does not document the header. No other provider's requests change.
 - Only OpenCode Go models served by `/chat/completions` work; the rest of the catalog needs the `/responses` or `/messages` wire formats, which `aic` does not implement.
+
+## Anthropic OAuth Tokens
+
+- The `anthropic` provider now accepts Claude subscription OAuth tokens (`sk-ant-oat…`) in `AIC_API_KEY`. Previously they failed with `authentication failed for provider 'anthropic'`, because `aic` always sent the key as `x-api-key`.
+- With an OAuth token, `aic` sends `Authorization: Bearer <token>` plus `anthropic-beta: oauth-2025-04-20`, and starts the system prompt with `You are Claude Code, Anthropic's official CLI for Claude.` (Anthropic rejects OAuth-token messages without it). `aic models --provider anthropic` uses the same auth. Console API keys (`sk-ant-api…`) keep the `x-api-key` path.
+- Caveat: subscription OAuth tokens appear to be meant for Anthropic's own clients; this may conflict with Anthropic's terms and can be blocked at any time. Prefer a Console API key.

@@ -397,6 +397,43 @@ async fn anthropic_engine_uses_messages_api_and_flattens_text_blocks() {
 }
 
 #[tokio::test]
+async fn anthropic_engine_sends_oauth_tokens_as_bearer_with_claude_code_identity() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(header("authorization", "Bearer sk-ant-oat01-token"))
+        .and(header("anthropic-beta", "oauth-2025-04-20"))
+        .and(header("anthropic-version", "2023-06-01"))
+        .and(|request: &wiremock::Request| !request.headers.contains_key("x-api-key"))
+        .and(body_string_contains(
+            "\"system\":\"You are Claude Code, Anthropic's official CLI for Claude.\\n\\nsystem rules\"",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "content": [{ "type": "text", "text": "feat: support oauth tokens" }]
+        })))
+        .mount(&server)
+        .await;
+
+    let config = Config {
+        ai_provider: "anthropic".to_owned(),
+        api_key: Some("sk-ant-oat01-token".to_owned()),
+        api_url: Some(format!("{}/v1", server.uri())),
+        model: "claude-haiku-5-5".to_owned(),
+        ..Config::default()
+    };
+    let engine = AnthropicEngine::new(config).unwrap();
+    let response = engine
+        .generate_commit_message(&[
+            ChatMessage::system("system rules"),
+            ChatMessage::user("diff"),
+        ])
+        .await
+        .unwrap();
+
+    assert_eq!(response, "feat: support oauth tokens");
+}
+
+#[tokio::test]
 async fn anthropic_engine_reports_cap_truncation_and_honors_a_per_call_cap() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

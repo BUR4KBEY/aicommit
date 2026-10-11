@@ -196,7 +196,7 @@ async fn fetch_anthropic_models(url: &str, config: &Config) -> Result<Vec<String
         .get(url)
         .header("anthropic-version", "2023-06-01");
     if let Some(api_key) = &config.api_key {
-        request = request.header("x-api-key", api_key);
+        request = crate::ai::anthropic::with_auth(request, api_key);
     }
     for (key, value) in &config.api_custom_headers {
         request = request.header(key, value);
@@ -345,5 +345,31 @@ mod tests {
                 "claude-sonnet-4-20250514".to_owned(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn fetches_anthropic_models_with_oauth_token_as_bearer() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer sk-ant-oat01-token"))
+            .and(header("anthropic-beta", "oauth-2025-04-20"))
+            .and(|request: &wiremock::Request| !request.headers.contains_key("x-api-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "id": "claude-haiku-5-5" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let config = Config {
+            ai_provider: "anthropic".to_owned(),
+            api_key: Some("sk-ant-oat01-token".to_owned()),
+            api_url: Some(format!("{}/v1", server.uri())),
+            ..Config::default()
+        };
+
+        let models = fetch_models("anthropic", &config).await.unwrap();
+
+        assert_eq!(models, vec!["claude-haiku-5-5".to_owned()]);
     }
 }
