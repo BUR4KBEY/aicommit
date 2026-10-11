@@ -3,9 +3,8 @@ use anyhow::{Result, bail};
 use crate::{cli::SplitMode, config::Config, generator, git, prompt::SplitPlanGroup, ui};
 
 use super::{
-    helpers::append_commit_history,
     push::{PushPlan, build_push_plan, execute_push_plan},
-    split::{SplitCommitDraft, generate_split_commit_drafts},
+    split::{SplitCommitDraft, commit_split_drafts, generate_split_commit_drafts},
 };
 
 /// Result of attempting the non-interactive split path. `SingleCommit`
@@ -13,10 +12,14 @@ use super::{
 pub(crate) enum AutoSplitOutcome {
     /// Split was not requested or a guardrail tripped (run single-commit).
     SingleCommit,
-    /// Dry run: plan rendered, nothing committed.
-    DryRun(Vec<SplitPlanGroup>),
-    /// Commits created in plan order with their short hashes.
-    Committed(Vec<AutoSplitCommit>),
+    /// Dry run: plan and drafted messages rendered, nothing committed.
+    DryRun(Vec<SplitCommitDraft>),
+    /// Commits created in plan order. `push_error` is set when every commit
+    /// landed but the push afterwards failed.
+    Committed {
+        commits: Vec<AutoSplitCommit>,
+        push_error: Option<anyhow::Error>,
+    },
 }
 
 pub(crate) struct AutoSplitCommit {
@@ -81,6 +84,10 @@ pub(crate) async fn run_auto_split(
         }
     };
 
+    if suggested.is_empty() {
+        // The model judged the staged set to be one concern.
+        return Ok(AutoSplitOutcome::SingleCommit);
+    }
     let Some(groups) = accept_auto_groups(config, &suggested, staged_files) else {
         return Ok(AutoSplitOutcome::SingleCommit);
     };
@@ -94,7 +101,7 @@ pub(crate) async fn run_auto_split(
 
     if dry_run {
         render_auto_split_plan(&drafts);
-        return Ok(AutoSplitOutcome::DryRun(groups));
+        return Ok(AutoSplitOutcome::DryRun(drafts));
     }
 
     let push_plan = build_push_plan(
@@ -112,59 +119,28 @@ pub(crate) async fn run_auto_split(
         );
     }
 
-    let mut commits = Vec::with_capacity(drafts.len());
-    for (index, draft) in drafts.iter().enumerate() {
-        // The model plan assigns every staged file exactly once (validated
-        // in generate_split_plan and re-checked in accept_auto_groups), so
-        // clear/add per group never double- or never-commits a file. Drafts
-        // already carry the message template, like the interactive flow.
-        git::clear_index()?;
-        git::add_files(&draft.group.files)?;
-        git::commit(
-            &draft.message,
-            &super::filtered_extra_args(config, extra_args),
-        )
-        .map_err(|error| {
-            if index == 0 {
-                error
-            } else {
-                anyhow::anyhow!(
-                    "split commit {} failed after {} earlier split commits were created: {error}",
-                    index + 1,
-                    index
-                )
-            }
-        })?;
-        let hash = git::head_short_hash()?;
-        ui::section(format!(
-            "Split commit {}/{} created",
-            index + 1,
-            drafts.len()
-        ));
-        ui::headline(draft.message.lines().next().unwrap_or(&draft.message));
-        append_commit_history(config, &draft.message, &draft.group.files);
-        commits.push(AutoSplitCommit {
-            draft: draft.clone(),
-            hash,
-        });
-    }
+    let hashes = commit_split_drafts(config, &drafts, extra_args, true)?;
+    let commits = drafts
+        .into_iter()
+        .zip(hashes)
+        .map(|(draft, hash)| AutoSplitCommit { draft, hash })
+        .collect();
 
-    execute_push_plan(push_plan, config, true).await?;
-    Ok(AutoSplitOutcome::Committed(commits))
+    let push_error = execute_push_plan(push_plan, config, true).await.err();
+    Ok(AutoSplitOutcome::Committed {
+        commits,
+        push_error,
+    })
 }
 
-/// Guardrailed acceptance: exactly-once file coverage, at least 2 groups,
-/// at most `config.split_max` groups. Rejections warn on stderr and return
-/// `None` (caller falls back to single-commit).
+/// Guardrailed acceptance: exactly-once file coverage, at most
+/// `config.split_max` groups. Rejections warn on stderr and return `None`
+/// (caller falls back to single-commit).
 fn accept_auto_groups(
     config: &Config,
     groups: &[SplitPlanGroup],
     staged_files: &[String],
 ) -> Option<Vec<SplitPlanGroup>> {
-    if groups.len() < 2 {
-        ui::warn("split plan proposed fewer than 2 groups; continuing with one commit");
-        return None;
-    }
     if groups.len() > config.split_max {
         ui::warn(format!(
             "split plan proposed {} groups (max {}); continuing with one commit",
@@ -222,13 +198,6 @@ mod tests {
             rationale: "test".to_owned(),
             files: files.iter().map(ToString::to_string).collect(),
         }
-    }
-
-    #[test]
-    fn rejects_single_group_plan() {
-        let config = Config::default();
-        let staged = vec!["a.txt".to_owned()];
-        assert!(accept_auto_groups(&config, &[group("one", &["a.txt"])], &staged).is_none());
     }
 
     #[test]

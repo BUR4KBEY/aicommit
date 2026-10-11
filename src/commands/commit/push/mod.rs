@@ -131,7 +131,31 @@ pub(crate) async fn execute_push_plan(
     }
 }
 
+/// Every failure here happens after the commit exists, so errors surface as
+/// [`AicError::CommitCreatedPushFailed`](crate::errors::AicError) (exit 3)
+/// unless the user aborted or a prompt needed a TTY.
 async fn push_to_remote(
+    remote: &PushRemoteOption,
+    config: &Config,
+    skip_confirmation: bool,
+) -> Result<PushOutcome> {
+    push_to_remote_inner(remote, config, skip_confirmation)
+        .await
+        .map_err(
+            |error| match error.downcast_ref::<crate::errors::AicError>() {
+                Some(
+                    crate::errors::AicError::CommitCreatedPushFailed(_)
+                    | crate::errors::AicError::Aborted
+                    | crate::errors::AicError::NotTty,
+                ) => error,
+                _ => anyhow::Error::new(crate::errors::AicError::CommitCreatedPushFailed(format!(
+                    "{error:#}"
+                ))),
+            },
+        )
+}
+
+async fn push_to_remote_inner(
     remote: &PushRemoteOption,
     config: &Config,
     skip_confirmation: bool,

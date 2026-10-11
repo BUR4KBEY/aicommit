@@ -77,6 +77,7 @@ pub fn split_system_prompt(config: &Config, context: &str) -> Result<String> {
 
     Ok(DEFAULT_SPLIT_PROMPT
         .replace("{{language}}", &config.language)
+        .replace("{{split_max}}", &config.split_max.to_string())
         .replace("{{context_instruction}}", &context_instruction))
 }
 

@@ -210,6 +210,7 @@ pub(crate) async fn create_split_commits(
     config: &Config,
     drafts: &[SplitCommitDraft],
     extra_args: &[String],
+    complete_plan: bool,
 ) -> Result<()> {
     let push_plan = build_push_plan(
         config.gitpush,
@@ -218,33 +219,92 @@ pub(crate) async fn create_split_commits(
         &config.remote_icon_style,
     )?;
 
-    for (index, draft) in drafts.iter().enumerate() {
-        git::clear_index()?;
-        git::add_files(&draft.group.files)?;
-        git::commit(&draft.message, &filtered_extra_args(config, extra_args)).map_err(|error| {
-            if index == 0 {
-                error
-            } else {
-                anyhow::anyhow!(
-                    "split commit {} failed after {} earlier split commits were created: {error}",
-                    index + 1,
-                    index
-                )
+    commit_split_drafts(config, drafts, extra_args, complete_plan)?;
+
+    execute_push_plan(push_plan, config, false)
+        .await
+        .map(|_| ())
+}
+
+/// Create one commit per draft, all or nothing, and return their short
+/// hashes. Each group is staged from a snapshot of the original index, with
+/// the old path of any staged rename so the deletion side travels with it.
+/// When `complete_plan` is set, the last group also takes every staged path
+/// the plan never named (ignore-filtered files), so nothing staged is
+/// dropped; otherwise those paths stay staged afterwards. If any commit
+/// fails, the earlier split commits are undone and the original index is
+/// restored before the error surfaces.
+pub(crate) fn commit_split_drafts(
+    config: &Config,
+    drafts: &[SplitCommitDraft],
+    extra_args: &[String],
+    complete_plan: bool,
+) -> Result<Vec<String>> {
+    let snapshot = git::snapshot_index()?;
+    let renames = git::staged_renames()?;
+    let commit_args = filtered_extra_args(config, extra_args);
+
+    let mut group_paths: Vec<Vec<String>> = drafts
+        .iter()
+        .map(|draft| {
+            let files = &draft.group.files;
+            let mut paths = files.clone();
+            paths.extend(
+                renames
+                    .iter()
+                    .filter(|(new, _)| files.contains(new))
+                    .map(|(_, old)| old.clone()),
+            );
+            paths
+        })
+        .collect();
+    let unplanned: Vec<String> = snapshot
+        .paths
+        .iter()
+        .filter(|path| !group_paths.iter().flatten().any(|planned| planned == *path))
+        .cloned()
+        .collect();
+    if complete_plan && let Some(last) = group_paths.last_mut() {
+        last.extend(unplanned.iter().cloned());
+    }
+
+    let mut hashes = Vec::with_capacity(drafts.len());
+    for (index, (draft, paths)) in drafts.iter().zip(&group_paths).enumerate() {
+        let result = git::stage_from_snapshot(&snapshot, paths)
+            .and_then(|()| git::commit(&draft.message, &commit_args))
+            .and_then(|_| git::head_short_hash());
+        match result {
+            Ok(hash) => hashes.push(hash),
+            Err(error) => {
+                let position = format!("split commit {} of {}", index + 1, drafts.len());
+                return Err(match git::restore_snapshot(&snapshot) {
+                    Ok(()) if index == 0 => {
+                        error.context(format!("{position} failed; nothing committed"))
+                    }
+                    Ok(()) => error.context(format!(
+                        "{position} failed; rolled back the {index} earlier split commits, nothing committed"
+                    )),
+                    Err(rollback_error) => error.context(format!(
+                        "{position} failed and rolling back the {index} earlier split commits also failed ({rollback_error:#}); inspect `git log` and the index"
+                    )),
+                });
             }
-        })?;
+        }
+    }
+    if !complete_plan && !unplanned.is_empty() {
+        git::stage_from_snapshot(&snapshot, &unplanned)?;
+    }
+
+    for (index, draft) in drafts.iter().enumerate() {
         ui::section(format!(
             "Split commit {}/{} created",
             index + 1,
             drafts.len()
         ));
         ui::headline(draft.message.lines().next().unwrap_or(&draft.message));
-
         append_commit_history(config, &draft.message, &draft.group.files);
     }
-
-    execute_push_plan(push_plan, config, false)
-        .await
-        .map(|_| ())
+    Ok(hashes)
 }
 
 #[cfg(test)]
@@ -339,6 +399,7 @@ mod tests {
                 },
             ],
             &[],
+            true,
         )
         .await
         .unwrap();
@@ -346,6 +407,111 @@ mod tests {
         let subjects = git_stdout(repo.path(), ["log", "--format=%s", "-2"]);
         let lines = subjects.lines().collect::<Vec<_>>();
         assert_eq!(lines, vec!["feat: update library", "docs: update readme"]);
+    }
+
+    fn draft(files: &[&str], message: &str) -> SplitCommitDraft {
+        SplitCommitDraft {
+            group: SplitPlanGroup {
+                title: message.to_owned(),
+                rationale: message.to_owned(),
+                files: files.iter().map(|file| (*file).to_owned()).collect(),
+            },
+            message: message.to_owned(),
+        }
+    }
+
+    fn test_config() -> Config {
+        Config {
+            ai_provider: "test".to_owned(),
+            gitpush: false,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn split_commits_keep_rename_sources_and_unplanned_staged_files() {
+        let _cwd = hold_cwd_for_test();
+        let repo = init_repo();
+        std::fs::write(repo.path().join("README.md"), "docs\n").unwrap();
+        std::fs::write(repo.path().join("a.txt"), "a\n").unwrap();
+        run_git_test(repo.path(), ["add", "."]);
+        run_git_test(repo.path(), ["commit", "-m", "init"]);
+
+        run_git_test(repo.path(), ["mv", "README.md", "GUIDE.md"]);
+        std::fs::write(repo.path().join("a.txt"), "a2\n").unwrap();
+        std::fs::write(repo.path().join("Cargo.lock"), "lock\n").unwrap();
+        run_git_test(repo.path(), ["add", "a.txt", "Cargo.lock"]);
+
+        let _dir = CurrentDirGuard::enter(repo.path());
+        // The plan never names Cargo.lock (ignore-filtered) or README.md
+        // (rename source); both must still land in a commit.
+        commit_split_drafts(
+            &test_config(),
+            &[
+                draft(&["GUIDE.md"], "docs: rename guide"),
+                draft(&["a.txt"], "feat: update a"),
+            ],
+            &[],
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(git_stdout(repo.path(), ["status", "--porcelain"]), "");
+        assert_eq!(
+            git_stdout(
+                repo.path(),
+                ["show", "--name-status", "--format=", "HEAD~1"]
+            ),
+            "R100\tREADME.md\tGUIDE.md"
+        );
+        assert_eq!(
+            git_stdout(repo.path(), ["show", "--name-only", "--format=", "HEAD"]),
+            "Cargo.lock\na.txt"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_split_commit_rolls_back_earlier_commits() {
+        let _cwd = hold_cwd_for_test();
+        let repo = init_repo();
+        std::fs::write(repo.path().join("base.txt"), "base\n").unwrap();
+        run_git_test(repo.path(), ["add", "."]);
+        run_git_test(repo.path(), ["commit", "-m", "init"]);
+        let head = git_stdout(repo.path(), ["rev-parse", "HEAD"]);
+
+        let hook = repo.path().join(".git/hooks/commit-msg");
+        std::fs::write(&hook, "#!/bin/sh\n! grep -q reject \"$1\"\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(repo.path().join("a.txt"), "a\n").unwrap();
+        std::fs::write(repo.path().join("b.txt"), "b\n").unwrap();
+        run_git_test(repo.path(), ["add", "a.txt", "b.txt"]);
+
+        let _dir = CurrentDirGuard::enter(repo.path());
+        let error = commit_split_drafts(
+            &test_config(),
+            &[
+                draft(&["a.txt"], "feat: add a"),
+                draft(&["b.txt"], "feat: reject b"),
+            ],
+            &[],
+            true,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .starts_with("split commit 2 of 2 failed; rolled back")
+        );
+        assert_eq!(git_stdout(repo.path(), ["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            git_stdout(repo.path(), ["diff", "--cached", "--name-only"]),
+            "a.txt\nb.txt"
+        );
     }
 
     fn init_repo() -> TempDir {

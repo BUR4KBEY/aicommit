@@ -1,16 +1,19 @@
 # Configuration
 
-`aic` reads configuration in this order:
+`aic` reads configuration in this order (later wins):
 
 1. Built-in defaults
 2. Global config at `~/.aicommit`
 3. Process environment variables
+4. Per-run CLI flags (`--provider`, `--model`)
+
+When no layer sets `AIC_MODEL`, the model defaults to the resolved provider's default model (for example `glm-5.3-flash` for `opencode-go`), not the `openai` default.
 
 ```mermaid
 flowchart LR
     Defaults["Built-in defaults"] --> Global["~/.aicommit"]
     Global --> Env["Process environment"]
-    Env --> Flags["CLI flags (--provider, --fgm, etc.)"]
+    Env --> Flags["CLI flags (--provider, --model, --fgm, etc.)"]
     Flags --> Runtime["Resolved runtime config"]
 ```
 
@@ -69,7 +72,7 @@ AIC_HOOK_AUTO_UNCOMMENT
 AIC_SPLIT_MAX
 ```
 
-`AIC_SPLIT_MAX` caps the number of groups `--split auto` will commit (default `10`, minimum `2`); a plan proposing more groups collapses to a single commit with a warning.
+`AIC_SPLIT_MAX` caps the number of groups a split plan may have (default `10`, minimum `2`). The split prompt asks the model for at most that many groups; a plan proposing more collapses to a single commit with a warning.
 
 `AIC_TOKENS_MAX_INPUT` defaults to `128000` for new configs. The `apple` provider caps it at `6000` at load time to fit the on-device model's context window; the cap is not written back to your config file.
 
@@ -132,6 +135,16 @@ aic models --provider ollama
 ```
 
 The alias `claudecode` is accepted and normalized to `claude-code`, and `fm` is normalized to `apple`.
+
+Use `--model <id>` to override the model for a single run. It beats `AIC_MODEL` from the environment and the config file, is passed to the provider as-is (only an empty value is rejected), and combines with `--provider`:
+
+```sh
+aic -y --model gpt-5.4
+aic --provider anthropic --model claude-opus-4-20250514
+AIC_MODEL=other aic -y --model chosen   # uses chosen
+```
+
+Without `--model`, `--provider` switches to that provider's default model unless the configured model is a custom (non-default) remote model, which is kept.
 
 `AIC_GITPUSH` controls whether `aic` offers a push step after committing. In the normal interactive flow, the single-remote prompt now defaults to `Yes`. With `aic --yes`, `aic` pushes automatically when exactly one remote is configured.
 

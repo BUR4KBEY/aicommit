@@ -175,15 +175,33 @@ fn non_tty_commit_hints_at_non_interactive_modes() {
 }
 
 #[test]
-fn non_tty_commit_with_no_changes_exits_2_without_hint() {
-    // Scratch repo, nothing staged, non-TTY: benign "no changes" (exit 2)
-    // takes precedence over the no-TTY hint, and stdout stays empty.
+fn non_tty_commit_with_no_changes_exits_2_with_hint() {
+    // Issue #9 acceptance: scratch repo, no changes, non-TTY → exit 2, exact
+    // hint on stderr, empty stdout.
     let repo = init_repo();
     let output = run_aic(repo.path(), &[]);
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "aic: interactive mode requires a TTY \u{2014} use \"aic -y\" for non-interactive commit (-y auto-stages), or \"aic -d\" to preview"
+        ),
+        "stderr: {stderr}"
+    );
     assert!(stderr.contains("no changes detected"), "stderr: {stderr}");
+}
+
+#[test]
+fn non_tty_setup_exits_2_with_hint() {
+    let repo = init_repo();
+    let output = run_aic(repo.path(), &["setup"]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("aic: interactive mode requires a TTY"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]

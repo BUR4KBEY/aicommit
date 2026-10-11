@@ -13,7 +13,8 @@ pub async fn run() -> Result<()> {
     // with the same non-interactive hint printed first.
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         eprintln!("{}", crate::exit::NO_TTY_HINT);
-        anyhow::bail!("aic setup is interactive-only; rerun in a terminal with a TTY on stdin");
+        return Err(anyhow::Error::new(crate::errors::AicError::NotTty)
+            .context("aic setup is interactive-only; rerun in a terminal with a TTY on stdin"));
     }
     ui::section("Setup");
     let providers = enabled_providers()

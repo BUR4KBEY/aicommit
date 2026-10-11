@@ -55,14 +55,14 @@ async fn request_split_plan(
     let cap = split_plan_output_cap(config, prompt_tokens, false);
     let response = request_plan(engine, messages, cap).await?;
     if !response.truncated {
-        return parse_split_plan_response(&response.text, staged_files);
+        return parse_split_plan_response(&response.text, staged_files, config.split_max);
     }
 
     let retry_cap = split_plan_output_cap(config, prompt_tokens, true);
     if retry_cap > cap {
         let retry = request_plan(engine, messages, retry_cap).await?;
         if !retry.truncated {
-            return parse_split_plan_response(&retry.text, staged_files);
+            return parse_split_plan_response(&retry.text, staged_files, config.split_max);
         }
         return Err(truncated_plan_error(retry_cap, config));
     }
@@ -183,12 +183,16 @@ pub async fn generate_split_plan(
     .await
 }
 
-fn parse_split_plan_response(input: &str, staged_files: &[String]) -> Result<Vec<SplitPlanGroup>> {
+fn parse_split_plan_response(
+    input: &str,
+    staged_files: &[String],
+    max_groups: usize,
+) -> Result<Vec<SplitPlanGroup>> {
     let normalized = sanitize_model_output(input);
     let json = extract_json_payload(&normalized);
     let response: SplitPlanResponse = serde_json::from_str(&json)
         .map_err(|error| anyhow::anyhow!("failed to parse split plan JSON: {error}"))?;
-    validate_split_plan(response.groups, staged_files)
+    validate_split_plan(response.groups, staged_files, max_groups)
 }
 
 fn extract_json_payload(input: &str) -> String {
@@ -202,15 +206,18 @@ fn extract_json_payload(input: &str) -> String {
     trimmed.to_owned()
 }
 
+/// An empty result means the model judged the change set to be one concern;
+/// callers continue with a single commit without treating it as a failure.
 fn validate_split_plan(
     groups: Vec<SplitPlanResponseGroup>,
     staged_files: &[String],
+    max_groups: usize,
 ) -> Result<Vec<SplitPlanGroup>> {
     if groups.len() < 2 {
-        bail!("split plan must contain at least 2 groups");
+        return Ok(Vec::new());
     }
-    if groups.len() > 4 {
-        bail!("split plan must contain at most 4 groups");
+    if groups.len() > max_groups {
+        bail!("split plan must contain at most {max_groups} groups");
     }
 
     let staged_set = staged_files.iter().cloned().collect::<BTreeSet<_>>();
@@ -265,16 +272,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_plan_rejects_single_group() {
-        let error = parse_split_plan_response(
+    fn split_plan_with_single_group_means_no_split() {
+        let groups = parse_split_plan_response(
             r#"{"groups":[{"title":"one","rationale":"one change","files":["src/lib.rs"]}]}"#,
             &["src/lib.rs".to_owned()],
+            4,
         )
-        .unwrap_err();
+        .unwrap();
+
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn split_plan_cap_follows_split_max() {
+        let plan = r#"{"groups":[
+            {"title":"a","rationale":"a","files":["a"]},
+            {"title":"b","rationale":"b","files":["b"]},
+            {"title":"c","rationale":"c","files":["c"]},
+            {"title":"d","rationale":"d","files":["d"]},
+            {"title":"e","rationale":"e","files":["e"]}
+        ]}"#;
+        let staged = ["a", "b", "c", "d", "e"].map(str::to_owned);
 
         assert_eq!(
-            error.to_string(),
-            "split plan must contain at least 2 groups"
+            parse_split_plan_response(plan, &staged, 10).unwrap().len(),
+            5
+        );
+        assert_eq!(
+            parse_split_plan_response(plan, &staged, 4)
+                .unwrap_err()
+                .to_string(),
+            "split plan must contain at most 4 groups"
         );
     }
 
@@ -286,6 +314,7 @@ mod tests {
                 {"title":"two","rationale":"two change","files":["src/main.rs"]}
             ]}"#,
             &["src/lib.rs".to_owned()],
+            4,
         )
         .unwrap_err();
 
@@ -300,6 +329,7 @@ mod tests {
                 {"title":"docs","rationale":"docs changes","files":["README.md"]}
             ]}"#,
             &["src/cli.rs".to_owned(), "README.md".to_owned()],
+            4,
         )
         .unwrap();
 

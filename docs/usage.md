@@ -37,6 +37,13 @@ Use the full GitMoji prompt:
 aic --fgm
 ```
 
+Use a different model for one run (beats `AIC_MODEL` and the config file; see [Configuration](configuration.md)):
+
+```sh
+aic --model gpt-5.4
+aic review --provider anthropic --model claude-opus-4-20250514
+```
+
 Generate and display the message without committing:
 
 ```sh
@@ -112,16 +119,26 @@ create the commits in plan order.
 
 ```sh
 aic -y --split auto       # one commit per group, no prompts
-aic -d --split auto       # print the plan without committing
+aic -d --split auto       # print the plan and drafted messages without committing
+aic -d --split auto --quiet  # one drafted subject per group
 aic -y --split auto --json  # commits + "split_plan": [...] in the envelope
 ```
 
-Guardrails (all silent fallbacks to a single commit, with a stderr warning):
+If the model judges the staged set to be one concern, `aic` makes a single
+commit without any warning. These guardrails also fall back to a single
+commit, with a stderr warning:
 
-- fewer than 2 usable groups proposed, or the plan request fails
-- more groups than `AIC_SPLIT_MAX` (default `10`)
+- the plan request fails or returns an invalid plan
+- more groups than `AIC_SPLIT_MAX` (default `10`); the model is asked for at most that many
 - any staged file also has unstaged changes
 - single-file staged sets, `--amend`, and binary/metadata-only inputs
+
+Every staged path lands in exactly one split commit: a staged rename travels
+with its group (both the deletion and the addition), and staged files the plan
+never saw (for example ones matched by `.aicommitignore`) go into the last
+group. Splits are all or nothing: if any split commit fails (for example a
+`commit-msg` hook rejects it), the earlier split commits are undone, the
+original index is restored, and `aic` exits `1`.
 
 `--split auto` requires `-y` (or `-d` for dry-run) and never prompts, so it
 is safe to run on arbitrary repos. `--split off` (the default) keeps
@@ -158,7 +175,7 @@ aic -d --quiet           # stdout = message only
 `--json` prints a single-line object:
 
 ```json
-{"command":"commit","dry_run":false,"provider":"openai","model":"gpt-5.4-mini","message":"feat: add json","commits":[{"hash":"abc1234","subject":"feat: add json","body":null,"files":["src.txt"]}],"split_plan":null,"error":null}
+{"command":"commit","dry_run":false,"provider":"openai","model":"gpt-5.4-mini","message":"feat: add json","commits":[{"hash":"abc1234","subject":"feat: add json","files":["src.txt"]}]}
 ```
 
 Notes:
@@ -166,21 +183,23 @@ Notes:
 - `--json` requires `-y` for real commits (dry-run excepted); `--quiet` implies `-y`.
 - `--json` and `--quiet` are mutually exclusive.
 - On failure under `--json`, stdout holds one JSON `error` object (`code`, `message`, `retryable`, `attempts`) and the exit code follows the [taxonomy](#exit-codes); diagnostics go to stderr.
-- `--json` / `--quiet` commit runs are single-commit unless `--split auto` is passed (then `commits` holds one entry per group and `split_plan` mirrors the plan); the interactive split flow is never offered.
+- `--json` / `--quiet` commit runs are single-commit unless `--split auto` is passed (then `commits` holds one entry per group and `split_plan` mirrors the plan; on `-d`, each `split_plan` entry also carries the drafted `message`); the interactive split flow is never offered.
+- If the commit is created but the push fails, the envelope still lists the created `commits` and adds an `error` with `code: "push_failed"`; the exit code is `3`.
 - `review` in machine mode requires staged files (no staging menu).
 - Null/absent optional fields (`message`, `commits`, `split_plan`, `error`) may be omitted; consumers must tolerate additions.
 
-Stable `error.code` values mirror the taxonomy cases: `no_changes`, `not_git_repo`, `not_a_tty`, `aborted`, `invalid_args`, `invalid_config`, `missing_api_key`, `model_not_found`, `too_many_tokens`, `misuse` (other misuse/environment failures) map to exit 2; `auth_failed`, `rate_limited`, `insufficient_credits`, `service_unavailable`, `empty_response`, `provider_error`, `invalid_split_plan`, `split_stage_failed`, `push_failed`, and `unknown` map to exit 1. `retryable` is true only for transient failures (`rate_limited`, `service_unavailable`, `split_stage_failed`); `attempts` is `1` unless the failure came from a split stage, where it reports the attempts that group made.
+Stable `error.code` values mirror the taxonomy cases: `no_changes`, `not_git_repo`, `not_a_tty`, `aborted`, `invalid_args`, `invalid_config`, `missing_api_key`, `model_not_found`, `too_many_tokens`, `misuse` (other misuse/environment failures) map to exit 2; `auth_failed`, `rate_limited`, `insufficient_credits`, `service_unavailable`, `empty_response`, `provider_error`, `invalid_split_plan`, `split_stage_failed`, and `unknown` map to exit 1; `push_failed` maps to exit 3. `retryable` is true only for transient failures (`rate_limited`, `service_unavailable`, `split_stage_failed`); `attempts` is `1` unless the failure came from a split stage, where it reports the attempts that group made.
 
 ## Exit Codes
 
-Every `aic` invocation exits with one of three codes (see `src/exit.rs`):
+Every `aic` invocation exits with one of four codes (see `src/exit.rs`):
 
 | Code | Meaning | Examples |
 | ---- | ------- | -------- |
 | `0` | Success: the requested work completed. | Commit created (including a deliberate split-plan → single-commit fallback), dry-run message printed, review/PR text printed. |
-| `1` | Runtime failure: retry later or fix the failure, but do not rerun the same command blindly. | Provider down or rate-limited, push rejected after the commit was created locally, unparseable split plan. |
+| `1` | Runtime failure, nothing committed: retry later or fix the failure, but do not rerun the same command blindly. | Provider down or rate-limited, unparseable split plan, a split commit rejected by a hook (earlier split commits are rolled back). |
 | `2` | Misuse / non-actionable environment: fix the invocation or environment and rerun. | No changes detected, not a git repository, stdin is not a TTY, bad flags/config, missing API key, user abort. |
+| `3` | Commit created, push failed: the commit exists locally; push it once the remote is reachable or in sync. | Push rejected (branch behind), remote missing or unreachable. |
 
 Invariants: `aic` never exits `0` with the commit undone, and never exits `1` with the commit created.
 
@@ -190,7 +209,7 @@ When a prompt would run but stdin is not a TTY, `aic` prints one actionable line
 aic: interactive mode requires a TTY — use "aic -y" for non-interactive commit (-y auto-stages), or "aic -d" to preview
 ```
 
-This covers the staged-file menu, commit-mode (split) menu, message-accept menu, staging menu, interactive history picker, and `aic setup` (which is interactive-only and keeps its dedicated wording alongside the hint).
+This covers the staged-file menu, commit-mode (split) menu, message-accept menu, staging menu, interactive history picker, and `aic setup` (which is interactive-only and keeps its dedicated wording alongside the hint). A plain `aic` with no TTY also prints the hint when there is nothing to commit, followed by `Error: no changes detected`.
 
 ## Diff Review
 

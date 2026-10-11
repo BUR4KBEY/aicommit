@@ -66,6 +66,9 @@ pub struct JsonSplitGroup {
     pub title: String,
     pub summary: String,
     pub files: Vec<String>,
+    /// Drafted commit message; set on dry runs, where no commit carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,6 +85,7 @@ impl From<&crate::prompt::SplitPlanGroup> for JsonSplitGroup {
             title: group.title.clone(),
             summary: group.rationale.clone(),
             files: group.files.clone(),
+            message: None,
         }
     }
 }
@@ -260,8 +264,6 @@ pub fn json_error_output(
     model: &str,
     error: &anyhow::Error,
 ) -> JsonOutput {
-    let (code, retryable) = error_code(error);
-    let attempts = split_draft_attempts(error).unwrap_or(1);
     JsonOutput {
         command: command.to_owned(),
         dry_run,
@@ -270,12 +272,17 @@ pub fn json_error_output(
         message: None,
         commits: None,
         split_plan: None,
-        error: Some(JsonError {
-            code,
-            message: error.to_string(),
-            retryable,
-            attempts,
-        }),
+        error: Some(json_error(error)),
+    }
+}
+
+pub fn json_error(error: &anyhow::Error) -> JsonError {
+    let (code, retryable) = error_code(error);
+    JsonError {
+        code,
+        message: error.to_string(),
+        retryable,
+        attempts: split_draft_attempts(error).unwrap_or(1),
     }
 }
 

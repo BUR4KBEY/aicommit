@@ -1,21 +1,31 @@
 # aicommit Unreleased
 
+## Per-Run Model Override (`--model`)
+
+- New top-level `--model <id>` flag, global like `-p/--provider`: it overrides `AIC_MODEL` from the environment and the config file for one run (CLI flag > env > config file), works with every subcommand that calls a provider, and shows up in the session banner and the `--json` `model` field. Only an empty value is rejected; the id is not checked against a catalog. Previously `--model x` was swallowed into the Git passthrough arguments.
+- `-p X --model Y` uses provider `X` with model `Y`.
+- Fix: when the provider comes from `AIC_AI_PROVIDER` (env or config file) and no layer sets `AIC_MODEL`, `aic` now uses that provider's default model (e.g. `glm-5.3-flash` for `opencode-go`) instead of sending the `openai` default `gpt-5.4-mini`.
+
 ## Machine-Readable Output (`--json` / `--quiet`)
 
 - New top-level `--json` flag for the `commit`, `review`, and `pr` flows: stdout holds exactly one JSON object (`command`, `dry_run`, `provider`, `model`, optional `message` / `commits` / `split_plan` / `error`), with all progress and TUI output suppressed and diagnostics routed to stderr. On failure the exit code is nonzero and stdout holds one JSON `error` object (`code`, `message`, `retryable`, `attempts`).
 - New top-level `--quiet` flag: prints only the decisive line(s) — the message for dry-runs, or `<hash> <subject>` per commit — and implies non-interactive behavior like `-y`.
-- `--json` requires `-y` for real commits (dry-run excepted); `--json` and `--quiet` are mutually exclusive. Machine runs are single-commit and never prompt. Human output without either flag is byte-identical to before.
+- `--json` requires `-y` for real commits (dry-run excepted); `--json` and `--quiet` are mutually exclusive. Machine runs never prompt. Human output without either flag is byte-identical to before.
 
 ## Exit-Code Taxonomy and No-TTY Hint
 
-- `aic` now exits `0` on success, `1` on runtime/provider failure, and `2` on misuse or non-actionable environment (no changes, not a git repository, stdin not a TTY, bad flags/config, user abort). `aic` never exits `0` with the commit undone and never exits `1` with the commit created; see `src/exit.rs` and the new "Exit Codes" table in `docs/usage.md`.
-- Whenever a prompt would run without a TTY on stdin, `aic` prints one actionable line to stderr (`aic: interactive mode requires a TTY — use "aic -y" for non-interactive commit (-y auto-stages), or "aic -d" to preview`), keeps stdout empty, and exits `2`. Applies to the staged-file, commit-mode (split), message-accept, and staging menus, interactive history, `aic setup`, `aic pr`, and `aic log` confirmations.
+- `aic` now exits `0` on success, `1` on runtime/provider failure with nothing committed, `2` on misuse or non-actionable environment (no changes, not a git repository, stdin not a TTY, bad flags/config, user abort), and `3` when the commit was created but the push failed. `aic` never exits `0` with the commit undone and never exits `1` with the commit created; see `src/exit.rs` and the new "Exit Codes" table in `docs/usage.md`.
+- A push failure after a successful commit (rejected, remote missing, unreachable) always exits `3`; under `--json` the envelope still lists the created `commits` and adds `error.code: "push_failed"`.
+- Whenever a prompt would run without a TTY on stdin, `aic` prints one actionable line to stderr (`aic: interactive mode requires a TTY — use "aic -y" for non-interactive commit (-y auto-stages), or "aic -d" to preview`), keeps stdout empty, and exits `2`. Applies to the staged-file, commit-mode (split), message-accept, and staging menus, interactive history, `aic setup`, `aic pr`, and `aic log` confirmations. A plain `aic` with nothing to commit prints the hint too, then `Error: no changes detected`.
 - `--json` `error.code` values mirror the taxonomy: new `not_a_tty`, `aborted`, `invalid_args`, `invalid_split_plan`, `provider_error`, `push_failed`, and `misuse` codes sit alongside the existing provider/config codes.
 
 ## Non-Interactive Split (`--split auto`)
 
-- New top-level `--split auto|off` flag (default `off`; zero behavior change): `aic -y --split auto` runs the full split pipeline without prompts — split plan, one message per group, commits in plan order — while `aic -d --split auto` prints the plan without committing. With `--json`, the plan is surfaced in `"split_plan": [...]` alongside one `commits` entry per group.
-- Consent guardrails: fewer than 2 usable groups, more groups than `AIC_SPLIT_MAX` (new config key, default `10`, minimum `2`), partially-staged files, single-file sets, `--amend`, and metadata-only inputs all fall back to the single-commit path with a stderr warning. `--split auto` requires `-y` (or `-d`) and never prompts. The interactive split picker is unchanged.
+- New top-level `--split auto|off` flag (default `off`; zero behavior change): `aic -y --split auto` runs the full split pipeline without prompts — split plan, one message per group, commits in plan order — while `aic -d --split auto` prints the plan and drafted messages without committing (`--quiet` prints one drafted subject per group). With `--json`, the plan is surfaced in `"split_plan": [...]` alongside one `commits` entry per group; on dry runs each plan entry also carries its drafted `message`.
+- `AIC_SPLIT_MAX` (new config key, default `10`, minimum `2`) is the real group cap for both the interactive and `--split auto` flows, and the split prompt asks the model for at most that many groups.
+- When the model judges the staged set to be one concern, `aic` makes a single commit without a warning. Over-cap plans, failed plan requests, partially-staged files, single-file sets, `--amend`, and metadata-only inputs fall back to the single-commit path with a stderr warning. `--split auto` requires `-y` (or `-d`) and never prompts.
+- Split commits cover every staged path: a staged rename stays in one commit with its deletion side, and staged files the plan never saw (for example `.aicommitignore` matches) go into the last group instead of being silently unstaged. The same applies to the interactive split flow, where "Commit remaining groups" now leaves the uncommitted groups staged.
+- Splits are all or nothing: if a split commit fails (for example a `commit-msg` hook rejects it), the earlier split commits are rolled back and the original index restored, so the run exits `1` with nothing committed.
 
 ## Split-Plan Robustness and Group Failure Semantics
 

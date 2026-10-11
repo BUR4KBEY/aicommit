@@ -5,8 +5,9 @@
 //! | Code | Meaning | Examples |
 //! | ---- | ------- | -------- |
 //! | `0` | success | commit created (or deliberately fell back from split plan to one commit), dry-run message printed, review/PR text printed |
-//! | `1` | runtime failure | provider down after retries exhausted, push rejected after commit creation, model bugs (unparseable plan) |
+//! | `1` | runtime failure, nothing committed | provider down, model bugs (unparseable plan), a split commit failed (earlier split commits are rolled back) |
 //! | `2` | misuse / non-actionable environment | no changes detected, not a git repository, stdin is not a TTY, bad flags/config, user abort |
+//! | `3` | commit created, push failed | push rejected or remote unreachable after the commit landed |
 //!
 //! Invariants:
 //!
@@ -16,6 +17,7 @@
 pub const SUCCESS: i32 = 0;
 pub const RUNTIME_FAILURE: i32 = 1;
 pub const MISUSE: i32 = 2;
+pub const COMMIT_CREATED_PUSH_FAILED: i32 = 3;
 
 /// Hint printed to stderr whenever a prompt would run but stdin is not a TTY.
 pub const NO_TTY_HINT: &str = "aic: interactive mode requires a TTY \u{2014} use \"aic -y\" for non-interactive commit (-y auto-stages), or \"aic -d\" to preview";
@@ -38,8 +40,8 @@ pub fn code_for(error: &anyhow::Error) -> i32 {
             | crate::errors::AicError::RateLimited(_)
             | crate::errors::AicError::InsufficientCredits(_)
             | crate::errors::AicError::ServiceUnavailable(_)
-            | crate::errors::AicError::EmptyMessage
-            | crate::errors::AicError::CommitCreatedPushFailed(_) => RUNTIME_FAILURE,
+            | crate::errors::AicError::EmptyMessage => RUNTIME_FAILURE,
+            crate::errors::AicError::CommitCreatedPushFailed(_) => COMMIT_CREATED_PUSH_FAILED,
         };
     }
 
@@ -136,7 +138,6 @@ mod tests {
         for message in [
             "failed to call AI provider",
             "connection reset by peer",
-            "commit was created locally, but the push was rejected",
             "rebase stopped with conflicts",
             "failed to parse split plan JSON",
         ] {
@@ -146,5 +147,17 @@ mod tests {
                 "message: {message}"
             );
         }
+    }
+
+    #[test]
+    fn push_failure_after_commit_exits_3_never_1() {
+        let error = anyhow::Error::new(crate::errors::AicError::CommitCreatedPushFailed(
+            "remote unreachable".to_owned(),
+        ));
+        assert_eq!(code_for(&error), COMMIT_CREATED_PUSH_FAILED);
+        assert_eq!(
+            code_for(&crate::output::mark_json_error_emitted(error)),
+            COMMIT_CREATED_PUSH_FAILED
+        );
     }
 }

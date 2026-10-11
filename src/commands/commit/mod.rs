@@ -64,13 +64,16 @@ pub async fn run(
     // paths that never prompt (`-y`, `-d`, and `--split auto`, which emits
     // its own actionable `-y` error when neither flag is present).
     if !amend && !skip_confirmation && !dry_run && split != SplitMode::Auto {
+        let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
+        if !interactive {
+            eprintln!("{}", crate::exit::NO_TTY_HINT);
+        }
         let staged = git::staged_files()?;
         let changed = git::changed_files()?;
         if staged.is_empty() && changed.is_empty() {
             bail!(AicError::NoChanges);
         }
-        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            eprintln!("{}", crate::exit::NO_TTY_HINT);
+        if !interactive {
             bail!(AicError::NotTty);
         }
     }
@@ -134,7 +137,10 @@ pub async fn run(
         .await?
         {
             AutoSplitOutcome::SingleCommit => {}
-            AutoSplitOutcome::DryRun(_) | AutoSplitOutcome::Committed(_) => return Ok(()),
+            AutoSplitOutcome::DryRun(_) => return Ok(()),
+            AutoSplitOutcome::Committed { push_error, .. } => {
+                return push_error.map_or(Ok(()), Err);
+            }
         }
     }
 

@@ -13,7 +13,8 @@ Output contract:
       }
     ]
   }
-- Return 2 to 4 groups.
+- Return 2 to {{split_max}} groups when the change set mixes separate concerns.
+- Return exactly 1 group containing every staged file when it is one concern.
 - Every staged file must appear exactly once across all groups.
 - Do not invent files.
 - Prefer cohesive user-facing concerns, not arbitrary alphabetic buckets.

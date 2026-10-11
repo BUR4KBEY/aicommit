@@ -25,9 +25,9 @@ pub use history::{
 pub use hooks::{hooks_path, remove_hook_if_owned, write_hook};
 pub use remote::{GitProvider, GitRemoteMetadata, commit, push, remote_metadata, remotes};
 pub use repo::{
-    ChangeSummary, add_files, assert_clean_worktree, assert_git_repo, changed_files, clear_index,
-    partially_staged_files, repo_root, staged_change_summaries, staged_diff, staged_files,
-    unstage_files,
+    ChangeSummary, IndexSnapshot, add_files, assert_clean_worktree, assert_git_repo, changed_files,
+    partially_staged_files, repo_root, restore_snapshot, snapshot_index, stage_from_snapshot,
+    staged_change_summaries, staged_diff, staged_files, staged_renames, unstage_files,
 };
 pub use sync::{
     GitRecoveryScenario, GitSyncSnapshot, GitSyncState, PullRebaseOutcome, fetch_sync_snapshot,

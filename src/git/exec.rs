@@ -38,14 +38,14 @@ fn command_output(output: Output) -> Result<GitOutput> {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if !output.status.success() {
-        bail!(
-            "{}",
-            if stderr.is_empty() {
-                stdout.clone()
-            } else {
-                stderr.clone()
-            }
-        );
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("git exited with {}", output.status)
+        };
+        bail!("{detail}");
     }
     Ok(GitOutput { stdout, stderr })
 }

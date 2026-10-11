@@ -88,6 +88,10 @@ pub(crate) async fn maybe_execute_split_flow(
             return Ok(false);
         }
     };
+    if suggested_groups.is_empty() {
+        ui::info("these changes look like one concern; continuing with one commit");
+        return Ok(false);
+    }
 
     let groups = choose_split_groups(&suggested_groups, staged_files)?;
     let Some(groups) = groups else {
@@ -111,7 +115,8 @@ pub(crate) async fn maybe_execute_split_flow(
 
         match selection.as_str() {
             CREATE_COMMITS_OPTION => {
-                create_split_commits(config, &drafts, extra_args).await?;
+                create_split_commits(config, &drafts, extra_args, drafts.len() == groups.len())
+                    .await?;
                 return Ok(true);
             }
             REGENERATE_ALL_MESSAGES_OPTION => {

@@ -76,18 +76,78 @@ pub fn unstage_files(files: &[String]) -> Result<()> {
     Ok(())
 }
 
-pub fn clear_index() -> Result<()> {
+/// Staged state captured before a split: the index tree, the commit HEAD
+/// pointed at, and every staged path (both sides of renames, ignore-filtered
+/// files included). Groups are staged from it; a failed split restores it.
+#[derive(Debug, Clone)]
+pub struct IndexSnapshot {
+    head: Option<String>,
+    tree: String,
+    pub paths: Vec<String>,
+}
+
+pub fn snapshot_index() -> Result<IndexSnapshot> {
     let root = repo_root()?;
-    run_git_dynamic_in(
-        &root,
-        vec![
-            "reset".to_owned(),
-            "HEAD".to_owned(),
-            "--".to_owned(),
-            ".".to_owned(),
-        ],
-    )?;
+    let tree = run_git_in(&root, ["write-tree"])?.stdout;
+    let head = if head_exists(&root)? {
+        Some(run_git_in(&root, ["rev-parse", "HEAD"])?.stdout)
+    } else {
+        None
+    };
+    let paths = parse_lines(
+        &run_git_in(&root, ["diff", "--cached", "--name-only", "--no-renames"])?.stdout,
+    );
+    Ok(IndexSnapshot { head, tree, paths })
+}
+
+/// Reset the index to the current HEAD, then stage `files` exactly as they
+/// were in the snapshot (additions, edits, and deletions alike).
+pub fn stage_from_snapshot(snapshot: &IndexSnapshot, files: &[String]) -> Result<()> {
+    let root = repo_root()?;
+    if head_exists(&root)? {
+        run_git_in(&root, ["read-tree", "HEAD"])?;
+    } else {
+        run_git_in(&root, ["read-tree", "--empty"])?;
+    }
+    if files.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec![
+        "restore".to_owned(),
+        "--staged".to_owned(),
+        format!("--source={}", snapshot.tree),
+        "--".to_owned(),
+    ];
+    args.extend(files.iter().cloned());
+    run_git_dynamic_in(&root, args)?;
     Ok(())
+}
+
+/// Drop every commit made since the snapshot and restore its index. The
+/// working tree is untouched.
+pub fn restore_snapshot(snapshot: &IndexSnapshot) -> Result<()> {
+    let root = repo_root()?;
+    match &snapshot.head {
+        Some(head) => run_git_in(&root, ["reset", "--soft", head.as_str()])?,
+        None => run_git_in(&root, ["update-ref", "-d", "HEAD"])?,
+    };
+    run_git_in(&root, ["read-tree", snapshot.tree.as_str()])?;
+    Ok(())
+}
+
+/// Staged renames as `(new path, old path)`. `staged_files` lists only the
+/// new path, so callers that stage by path need the old one to record the
+/// deletion side.
+pub fn staged_renames() -> Result<Vec<(String, String)>> {
+    let root = repo_root()?;
+    let output = run_git_in(
+        &root,
+        ["diff", "--cached", "--name-status", "--find-renames"],
+    )?;
+    Ok(parse_name_status(&output.stdout)
+        .into_iter()
+        .filter_map(|change| change.previous_path.map(|old| (change.path, old)))
+        .collect())
 }
 
 pub fn staged_diff(files: &[String]) -> Result<String> {
@@ -284,20 +344,6 @@ mod tests {
         let partial = partially_staged_files(&["src.txt".to_owned()]).unwrap();
 
         assert_eq!(partial, vec!["src.txt".to_owned()]);
-    }
-
-    #[test]
-    fn clear_index_unstages_files() {
-        let _cwd = hold_cwd_for_test();
-        let repo = init_repo();
-        std::fs::write(repo.path().join("extra.txt"), "hello\n").unwrap();
-        run_git_test(repo.path(), ["add", "extra.txt"]);
-
-        let _dir = CurrentDirGuard::enter(repo.path());
-        clear_index().unwrap();
-        let staged_after = staged_files().unwrap();
-
-        assert!(staged_after.is_empty());
     }
 
     #[test]

@@ -6,8 +6,8 @@ use crate::{
     errors::AicError,
     generator, git,
     output::{
-        JsonCommit, JsonOutput, JsonSplitGroup, OutputMode, emit_json, json_error_output,
-        mark_json_error_emitted, split_message,
+        JsonCommit, JsonOutput, JsonSplitGroup, OutputMode, emit_json, json_error,
+        json_error_output, mark_json_error_emitted, split_message,
     },
 };
 
@@ -37,7 +37,7 @@ pub(super) async fn run_machine(
     output: OutputMode,
 ) -> Result<()> {
     // Resolve provider/model for JSON errors. Config load itself can fail;
-    // fall back to override/default then. Note: AIC_MODEL env / config file
+    // fall back to overrides/defaults then. Note: AIC_MODEL env / config file
     // can change the model; resolved in run_machine_inner on success paths.
     let fallback_provider = overrides
         .provider
@@ -61,88 +61,52 @@ pub(super) async fn run_machine(
     )
     .await;
 
-    match outcome {
-        Ok(JsonOutput {
-            command,
-            dry_run,
-            provider,
-            model,
-            message,
-            commits,
-            split_plan,
-            error: None,
-        }) if output.is_json() => {
-            emit_json(&JsonOutput {
-                command,
-                dry_run,
-                provider,
-                model,
-                message,
-                commits,
-                split_plan,
-                error: None,
-            });
-            Ok(())
-        }
-        Ok(JsonOutput {
-            message,
-            commits,
-            error: None,
-            ..
-        }) => {
-            // Quiet mode: message (dry-run) or `hash subject` per commit.
-            if let Some(commits) = commits.filter(|c| !c.is_empty()) {
-                for commit in &commits {
-                    match &commit.hash {
-                        Some(hash) => println!("{hash} {}", commit.subject),
-                        None => println!("{}", commit.subject),
-                    }
-                }
-            } else if let Some(message) = message {
-                println!("{message}");
-            }
-            Ok(())
-        }
-        Ok(JsonOutput {
-            command,
-            dry_run,
-            provider,
-            model,
-            error: Some(error),
-            ..
-        }) => {
-            // Unreachable today: failures return Err below. Kept total so a
-            // future partial-success path cannot leak prose to stdout.
-            debug_assert!(false, "machine flow returned error payload as Ok");
-            emit_json(&JsonOutput {
-                command,
-                dry_run,
-                provider,
-                model,
-                message: None,
-                commits: None,
-                split_plan: None,
-                error: Some(error),
-            });
-            bail!("machine flow failed");
-        }
+    let (mut result, push_error) = match outcome {
+        Ok(outcome) => outcome,
         Err(error) => {
             if output.is_json() {
                 // Best-effort: re-resolve config for accurate provider/model
                 // in the error envelope (cheap, no network).
-                let (provider, model) =
-                    match Config::load_with_overrides(&overrides) {
-                        Ok(config) => (config.ai_provider, config.model),
-                        Err(_) => (fallback_provider, fallback_model),
-                    };
+                let (provider, model) = match Config::load_with_overrides(&overrides) {
+                    Ok(config) => (config.ai_provider, config.model),
+                    Err(_) => (fallback_provider, fallback_model),
+                };
                 emit_json(&json_error_output(
                     "commit", dry_run, &provider, &model, &error,
                 ));
                 return Err(mark_json_error_emitted(error));
             }
-            Err(error)
+            return Err(error);
+        }
+    };
+
+    // A push failure after the commits landed still reports those commits,
+    // then surfaces the error (exit 3) so callers know the push is pending.
+    if output.is_json() {
+        result.error = push_error.as_ref().map(json_error);
+        emit_json(&result);
+        return push_error.map_or(Ok(()), |error| Err(mark_json_error_emitted(error)));
+    }
+
+    // Quiet mode: message (dry-run), split subjects (split dry-run), or
+    // `hash subject` per commit.
+    if let Some(commits) = result.commits.filter(|c| !c.is_empty()) {
+        for commit in &commits {
+            match &commit.hash {
+                Some(hash) => println!("{hash} {}", commit.subject),
+                None => println!("{}", commit.subject),
+            }
+        }
+    } else if let Some(message) = result.message {
+        println!("{message}");
+    } else if let Some(groups) = result.split_plan {
+        for group in groups {
+            if let Some(message) = group.message {
+                println!("{}", split_message(&message).0);
+            }
         }
     }
+    push_error.map_or(Ok(()), Err)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -156,7 +120,7 @@ async fn run_machine_inner(
     overrides: &ConfigOverrides,
     split: SplitMode,
     output: OutputMode,
-) -> Result<JsonOutput> {
+) -> Result<(JsonOutput, Option<anyhow::Error>)> {
     git::assert_git_repo()?;
     let config = Config::load_with_overrides(overrides)?;
 
@@ -214,19 +178,32 @@ async fn run_machine_inner(
         .await?
         {
             AutoSplitOutcome::SingleCommit => {}
-            AutoSplitOutcome::DryRun(groups) => {
-                return Ok(JsonOutput {
-                    command: "commit".to_owned(),
-                    dry_run: true,
-                    provider: config.ai_provider.clone(),
-                    model: config.model.clone(),
-                    message: None,
-                    commits: Some(vec![]),
-                    split_plan: Some(groups.iter().map(JsonSplitGroup::from).collect()),
-                    error: None,
-                });
+            AutoSplitOutcome::DryRun(drafts) => {
+                let split_plan = drafts
+                    .iter()
+                    .map(|draft| JsonSplitGroup {
+                        message: Some(draft.message.clone()),
+                        ..JsonSplitGroup::from(&draft.group)
+                    })
+                    .collect();
+                return Ok((
+                    JsonOutput {
+                        command: "commit".to_owned(),
+                        dry_run: true,
+                        provider: config.ai_provider.clone(),
+                        model: config.model.clone(),
+                        message: None,
+                        commits: Some(vec![]),
+                        split_plan: Some(split_plan),
+                        error: None,
+                    },
+                    None,
+                ));
             }
-            AutoSplitOutcome::Committed(commits) => {
+            AutoSplitOutcome::Committed {
+                commits,
+                push_error,
+            } => {
                 let split_plan: Vec<JsonSplitGroup> = commits
                     .iter()
                     .map(|commit| JsonSplitGroup::from(&commit.draft.group))
@@ -243,16 +220,19 @@ async fn run_machine_inner(
                         }
                     })
                     .collect();
-                return Ok(JsonOutput {
-                    command: "commit".to_owned(),
-                    dry_run: false,
-                    provider: config.ai_provider.clone(),
-                    model: config.model.clone(),
-                    message: None,
-                    commits: Some(commits),
-                    split_plan: Some(split_plan),
-                    error: None,
-                });
+                return Ok((
+                    JsonOutput {
+                        command: "commit".to_owned(),
+                        dry_run: false,
+                        provider: config.ai_provider.clone(),
+                        model: config.model.clone(),
+                        message: None,
+                        commits: Some(commits),
+                        split_plan: Some(split_plan),
+                        error: None,
+                    },
+                    push_error,
+                ));
             }
         }
     }
@@ -272,37 +252,44 @@ async fn run_machine_inner(
     );
 
     if dry_run {
-        return Ok(JsonOutput {
-            command: "commit".to_owned(),
-            dry_run: true,
-            provider: config.ai_provider.clone(),
-            model: config.model.clone(),
-            message: Some(message),
-            commits: Some(vec![]),
-            split_plan: None,
-            error: None,
-        });
+        return Ok((
+            JsonOutput {
+                command: "commit".to_owned(),
+                dry_run: true,
+                provider: config.ai_provider.clone(),
+                model: config.model.clone(),
+                message: Some(message),
+                commits: Some(vec![]),
+                split_plan: None,
+                error: None,
+            },
+            None,
+        ));
     }
 
-    let (hash, subject, body) = machine_commit_and_push(&config, &message, &extra_args).await?;
+    let (hash, subject, body, push_error) =
+        machine_commit_and_push(&config, &message, &extra_args).await?;
 
     append_commit_history(&config, &message, &files);
 
-    Ok(JsonOutput {
-        command: "commit".to_owned(),
-        dry_run: false,
-        provider: config.ai_provider.clone(),
-        model: config.model.clone(),
-        message: Some(message),
-        commits: Some(vec![JsonCommit {
-            hash: Some(hash),
-            subject,
-            body,
-            files,
-        }]),
-        split_plan: None,
-        error: None,
-    })
+    Ok((
+        JsonOutput {
+            command: "commit".to_owned(),
+            dry_run: false,
+            provider: config.ai_provider.clone(),
+            model: config.model.clone(),
+            message: Some(message),
+            commits: Some(vec![JsonCommit {
+                hash: Some(hash),
+                subject,
+                body,
+                files,
+            }]),
+            split_plan: None,
+            error: None,
+        },
+        push_error,
+    ))
 }
 
 /// Non-interactive staging: mirror `ensure_staged_files` for the `-y` path.
@@ -324,7 +311,8 @@ fn machine_ensure_staged(skip_confirmation: bool) -> Result<()> {
     bail!("no files staged; stage files or rerun with -y to stage all changed files");
 }
 
-/// Commit and push without prompts. Returns `(hash, subject, body)`.
+/// Commit and push without prompts. Returns `(hash, subject, body, push
+/// error)`; a push failure never hides the commit that was created.
 /// Mirrors `push::commit_and_maybe_push` minus all UI; push plan
 /// `ConfirmSingle`/`SelectRemote` cannot occur because machine flows force
 /// `skip_confirmation`-style resolution (auto-push iff exactly one remote).
@@ -332,8 +320,28 @@ async fn machine_commit_and_push(
     config: &Config,
     message: &str,
     extra_args: &[String],
-) -> Result<(String, String, Option<String>)> {
+) -> Result<(String, String, Option<String>, Option<anyhow::Error>)> {
     use super::filtered_extra_args;
+
+    // Resolve the push plan before committing so a remote-selection problem
+    // fails with nothing created.
+    let plan = build_push_plan(
+        config.gitpush,
+        true,
+        &git::remote_metadata()?,
+        &config.remote_icon_style,
+    )?;
+    if matches!(
+        plan,
+        PushPlan::ConfirmSingle { .. } | PushPlan::SelectRemote(_)
+    ) {
+        // Unreachable: build_push_plan with skip=true only yields
+        // Skip/AutoPush (or bails on multi-remote). Fail loudly if that
+        // ever changes instead of silently prompting.
+        bail!(
+            "machine mode cannot choose a push remote; set AIC_GITPUSH=false or configure exactly one remote"
+        );
+    }
 
     let filtered = filtered_extra_args(config, extra_args);
     git::commit(message, &filtered)?;
@@ -341,29 +349,7 @@ async fn machine_commit_and_push(
     let hash = git::head_short_hash()?;
     let (subject, body) = split_message(message);
 
-    // Push: reuse plan builder with forced skip_confirmation semantics so a
-    // single remote auto-pushes and multiple remotes error (same as -y).
-    let plan = build_push_plan(
-        config.gitpush,
-        true,
-        &git::remote_metadata()?,
-        &config.remote_icon_style,
-    )?;
-    match plan {
-        PushPlan::Skip => {}
-        PushPlan::AutoPush(remote) => {
-            // execute_push_plan(AutoPush) performs no prompts.
-            execute_push_plan(PushPlan::AutoPush(remote), config, true).await?;
-        }
-        // Unreachable: build_push_plan with skip=true only yields Skip/AutoPush
-        // (or bails on multi-remote). Match explicitly to fail loudly if that
-        // ever changes instead of silently prompting.
-        PushPlan::ConfirmSingle { .. } | PushPlan::SelectRemote(_) => {
-            bail!(
-                "machine mode cannot choose a push remote; set AIC_GITPUSH=false or configure exactly one remote"
-            );
-        }
-    }
-
-    Ok((hash, subject, body))
+    // execute_push_plan(Skip/AutoPush) performs no prompts.
+    let push_error = execute_push_plan(plan, config, true).await.err();
+    Ok((hash, subject, body, push_error))
 }
