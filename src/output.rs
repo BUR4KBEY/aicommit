@@ -125,6 +125,7 @@ pub fn error_code(error: &anyhow::Error) -> (String, bool) {
             crate::errors::AicError::ServiceUnavailable(_) => {
                 ("service_unavailable".to_owned(), true)
             }
+            crate::errors::AicError::InvalidRequest(_) => ("invalid_request".to_owned(), false),
             crate::errors::AicError::EmptyMessage => ("empty_response".to_owned(), false),
             crate::errors::AicError::TooManyTokens => ("too_many_tokens".to_owned(), false),
             crate::errors::AicError::UnsupportedConfigKey(_)
@@ -132,6 +133,16 @@ pub fn error_code(error: &anyhow::Error) -> (String, bool) {
                 ("invalid_config".to_owned(), false)
             }
         };
+    }
+    // A split group that failed on a rejected request fails the same way on a
+    // rerun, so it must not advertise itself as retryable.
+    if let Some(failure) = error.downcast_ref::<crate::commands::commit::SplitDraftFailure>()
+        && failure
+            .source
+            .downcast_ref::<crate::errors::AicError>()
+            .is_some_and(crate::errors::AicError::rejects_request)
+    {
+        return ("split_stage_failed".to_owned(), false);
     }
 
     let message = error.to_string();

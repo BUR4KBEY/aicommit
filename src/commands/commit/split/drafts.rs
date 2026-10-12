@@ -4,7 +4,7 @@ use crate::{config::Config, generator, git, prompt::SplitPlanGroup, ui};
 
 use super::super::{
     apply_message_template, filtered_extra_args,
-    helpers::append_commit_history,
+    helpers::{append_commit_history, staged_commit_input},
     push::{build_push_plan, execute_push_plan},
 };
 
@@ -125,12 +125,16 @@ async fn generate_group_draft(
         source,
     };
 
-    let group_diff =
-        git::staged_diff(&group.files).map_err(|error| failure("staged diff read", 0, error))?;
+    // A group of lock files or images has no textual diff after filtering;
+    // fall back to file metadata so the provider never gets an empty message.
+    let group_input =
+        staged_commit_input(&group.files).map_err(|error| failure("staged diff read", 0, error))?;
     let draft_label = format!("commit {}/{}", index + 1, total);
 
+    let mut attempts = 0;
     let mut last_error = None;
-    for _ in 0..GROUP_MESSAGE_ATTEMPTS {
+    while attempts < GROUP_MESSAGE_ATTEMPTS {
+        attempts += 1;
         let spinner = ui::StatusSpinner::start(
             format!("Drafting {}: {}", draft_label, group.title),
             ui::StatusPool::Waiting,
@@ -140,7 +144,7 @@ async fn generate_group_draft(
         };
         let generated = generator::generate_commit_message(
             config,
-            &group_diff,
+            &group_input.content,
             full_gitmoji_spec,
             context,
             &group.files,
@@ -156,13 +160,21 @@ async fn generate_group_draft(
                     message: apply_message_template(config, extra_args, &message),
                 });
             }
-            Err(error) => last_error = Some(error),
+            Err(error) => {
+                let rejected = error
+                    .downcast_ref::<crate::errors::AicError>()
+                    .is_some_and(crate::errors::AicError::rejects_request);
+                last_error = Some(error);
+                if rejected {
+                    break;
+                }
+            }
         }
     }
 
     Err(failure(
         "message generation",
-        GROUP_MESSAGE_ATTEMPTS,
+        attempts,
         last_error.unwrap_or_else(|| anyhow::anyhow!("provider returned no message")),
     ))
 }
@@ -360,6 +372,106 @@ mod tests {
 
         assert_eq!(drafts[0].message, "docs: update readme");
         assert_eq!(drafts[1].message, "feat: update library");
+    }
+
+    const EMPTY_USER_MESSAGE_400: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.2: user messages must have non-empty content"}}"#;
+
+    fn anthropic_config(server: &wiremock::MockServer) -> Config {
+        Config {
+            ai_provider: "anthropic".to_owned(),
+            api_key: Some("key".to_owned()),
+            api_url: Some(format!("{}/v1", server.uri())),
+            model: "claude-haiku-5-5".to_owned(),
+            gitpush: false,
+            ..Config::default()
+        }
+    }
+
+    fn lock_file_group() -> SplitPlanGroup {
+        SplitPlanGroup {
+            title: "Update flake lock".to_owned(),
+            rationale: "pins".to_owned(),
+            files: vec!["flake.lock".to_owned()],
+        }
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn lock_file_only_group_sends_file_metadata_instead_of_an_empty_diff() {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
+
+        let _cwd = hold_cwd_for_test();
+        let repo = init_repo();
+        std::fs::write(repo.path().join("flake.lock"), "{\"nodes\":{}}\n").unwrap();
+        run_git_test(repo.path(), ["add", "flake.lock"]);
+        let _dir = CurrentDirGuard::enter(repo.path());
+
+        let server = MockServer::start().await;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::body_string_contains("added lockfile: flake.lock"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "content": [{ "type": "text", "text": "chore: update flake lock" }]
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(matchers::method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(EMPTY_USER_MESSAGE_400))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let drafts = generate_split_commit_drafts(
+            &anthropic_config(&server),
+            &[lock_file_group()],
+            "",
+            false,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(drafts[0].message, "chore: update flake lock");
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn rejected_group_request_is_sent_once_and_reported_as_invalid() {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
+
+        let _cwd = hold_cwd_for_test();
+        let repo = init_repo();
+        std::fs::write(repo.path().join("flake.lock"), "{\"nodes\":{}}\n").unwrap();
+        run_git_test(repo.path(), ["add", "flake.lock"]);
+        let _dir = CurrentDirGuard::enter(repo.path());
+
+        let server = MockServer::start().await;
+        Mock::given(matchers::method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(EMPTY_USER_MESSAGE_400))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let failure = generate_split_commit_drafts(
+            &anthropic_config(&server),
+            &[lock_file_group()],
+            "",
+            false,
+            &[],
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(failure.attempts, 1);
+        assert!(matches!(
+            failure.source.downcast_ref::<crate::errors::AicError>(),
+            Some(crate::errors::AicError::InvalidRequest(_))
+        ));
+        let error = anyhow::Error::new(failure);
+        assert_eq!(
+            crate::output::error_code(&error),
+            ("split_stage_failed".to_owned(), false)
+        );
     }
 
     #[allow(clippy::await_holding_lock)]

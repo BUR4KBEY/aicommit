@@ -105,8 +105,12 @@ to raise instead of surfacing a raw JSON parse error.
 
 Messages for every group are generated before any commit is created, so a
 message failure never leaves partial commits behind. Each group message is
-attempted up to 4 times. If a group still fails, the interactive flow offers
-`Retry failed group` / `Commit remaining groups` / `Abort`; nothing is
+attempted up to 4 times; a request the provider rejects as invalid (4xx other
+than `408`, `409`, and `429`), or an auth/quota/model error, fails on the first
+attempt because resending it cannot help. Groups with no textual diff after
+filtering (lock files, images) are drafted from file metadata, like a
+single commit of the same files. If a group still fails, the interactive flow
+offers `Retry failed group` / `Commit remaining groups` / `Abort`; nothing is
 committed until you choose. The non-interactive path never partial-commits:
 it exits nonzero with one stderr line, for example
 `group 2 of 3: message generation failed after 4 attempts; nothing committed: ...`.
@@ -188,7 +192,7 @@ Notes:
 - `review` in machine mode requires staged files (no staging menu).
 - Null/absent optional fields (`message`, `commits`, `split_plan`, `error`) may be omitted; consumers must tolerate additions.
 
-Stable `error.code` values mirror the taxonomy cases: `no_changes`, `not_git_repo`, `not_a_tty`, `aborted`, `invalid_args`, `invalid_config`, `missing_api_key`, `model_not_found`, `too_many_tokens`, `misuse` (other misuse/environment failures) map to exit 2; `auth_failed`, `rate_limited`, `insufficient_credits`, `service_unavailable`, `empty_response`, `provider_error`, `invalid_split_plan`, `split_stage_failed`, and `unknown` map to exit 1; `push_failed` maps to exit 3. `retryable` is true only for transient failures (`rate_limited`, `service_unavailable`, `split_stage_failed`); `attempts` is `1` unless the failure came from a split stage, where it reports the attempts that group made.
+Stable `error.code` values mirror the taxonomy cases: `no_changes`, `not_git_repo`, `not_a_tty`, `aborted`, `invalid_args`, `invalid_config`, `missing_api_key`, `model_not_found`, `too_many_tokens`, `misuse` (other misuse/environment failures) map to exit 2; `auth_failed`, `rate_limited`, `insufficient_credits`, `service_unavailable`, `invalid_request` (the provider rejected the request with a 4xx), `empty_response`, `provider_error`, `invalid_split_plan`, `split_stage_failed`, and `unknown` map to exit 1; `push_failed` maps to exit 3. `retryable` is true only for transient failures (`rate_limited`, `service_unavailable`, and `split_stage_failed` unless the group's request was rejected); `attempts` is `1` unless the failure came from a split stage, where it reports the attempts that group made.
 
 ## Exit Codes
 

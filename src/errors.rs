@@ -41,6 +41,9 @@ pub enum AicError {
     #[error("service unavailable for provider '{0}'")]
     ServiceUnavailable(String),
 
+    #[error("provider rejected the request as invalid: {0}")]
+    InvalidRequest(String),
+
     #[error("AI provider returned an empty response")]
     EmptyMessage,
 
@@ -48,6 +51,24 @@ pub enum AicError {
         "diff is too large for the configured token limits - raise AIC_TOKENS_MAX_INPUT or exclude bulky files via .aicommitignore"
     )]
     TooManyTokens,
+}
+
+impl AicError {
+    /// True when the provider refused this exact request, so sending it again
+    /// unchanged fails the same way. Callers must not retry these.
+    pub fn rejects_request(&self) -> bool {
+        matches!(
+            self,
+            AicError::MissingApiKey(_)
+                | AicError::ModelNotFound { .. }
+                | AicError::Authentication(_)
+                | AicError::InsufficientCredits(_)
+                | AicError::InvalidRequest(_)
+                | AicError::TooManyTokens
+                | AicError::UnsupportedConfigKey(_)
+                | AicError::InvalidConfigValue { .. }
+        )
+    }
 }
 
 pub fn normalize_provider_error(
@@ -94,9 +115,17 @@ pub fn normalize_provider_error(
         || lower.contains("payment")
     {
         AicError::InsufficientCredits(provider.to_owned())
+    } else if status.is_some_and(is_client_request_error) {
+        AicError::InvalidRequest(format!("{provider}: {body}"))
     } else {
         AicError::ServiceUnavailable(format!("{provider}: {body}"))
     }
+}
+
+/// 4xx means the request itself is wrong. 408 (timeout) and 409 (conflict)
+/// can clear on their own, so they stay retryable.
+fn is_client_request_error(status: u16) -> bool {
+    (400..=499).contains(&status) && status != 408 && status != 409
 }
 
 fn mentions_context_overflow(lower: &str) -> bool {
@@ -163,5 +192,29 @@ mod tests {
             "model 'llama3' not found, try pulling it first",
         );
         assert!(matches!(error, AicError::ModelNotFound { .. }));
+    }
+
+    #[test]
+    fn bad_request_is_an_invalid_request_not_service_unavailable() {
+        let error = normalize_provider_error(
+            "anthropic",
+            "claude-haiku-5-5",
+            Some(400),
+            r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.2: user messages must have non-empty content"}}"#,
+        );
+        assert!(matches!(error, AicError::InvalidRequest(_)));
+        assert!(error.rejects_request());
+    }
+
+    #[test]
+    fn transient_statuses_stay_retryable() {
+        for status in [408, 409, 500, 503] {
+            let error = normalize_provider_error("anthropic", "claude", Some(status), "oops");
+            assert!(
+                matches!(error, AicError::ServiceUnavailable(_)),
+                "status {status}"
+            );
+            assert!(!error.rejects_request(), "status {status}");
+        }
     }
 }

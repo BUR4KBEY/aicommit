@@ -40,6 +40,7 @@ pub fn code_for(error: &anyhow::Error) -> i32 {
             | crate::errors::AicError::RateLimited(_)
             | crate::errors::AicError::InsufficientCredits(_)
             | crate::errors::AicError::ServiceUnavailable(_)
+            | crate::errors::AicError::InvalidRequest(_)
             | crate::errors::AicError::EmptyMessage => RUNTIME_FAILURE,
             crate::errors::AicError::CommitCreatedPushFailed(_) => COMMIT_CREATED_PUSH_FAILED,
         };
